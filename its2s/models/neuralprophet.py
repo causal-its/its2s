@@ -1,0 +1,91 @@
+# Description: NeuralProphet model with autoregression and lagged regressors.
+# Usage: from its2s.models.neuralprophet import NeuralProphetModel
+# Dependencies: neuralprophet, numpy, pandas
+
+import logging
+
+import numpy as np
+import pandas as pd
+from neuralprophet import NeuralProphet, set_log_level
+
+from .base import BaseModel, FitResult, PredictionResult
+
+
+class NeuralProphetModel(BaseModel):
+    """NeuralProphet model with AR terms and optional lagged regressors."""
+
+    def __init__(self, params=None):
+        super().__init__(params)
+        self._model = None
+        self._covariate_cols = None
+        self._date_col = None
+        self._target_col = None
+
+    def _build_model(self):
+        p = self.params
+        set_log_level("ERROR")
+        model = NeuralProphet(
+            n_lags=p.get("n_lags", 14),
+            yearly_seasonality=p.get("yearly_seasonality", True),
+            weekly_seasonality=p.get("weekly_seasonality", True),
+            learning_rate=p.get("learning_rate", 0.01),
+            epochs=p.get("epochs", 100),
+            batch_size=p.get("batch_size", 64),
+        )
+        return model
+
+    def _prep_df(self, df, date_col, target_col, covariate_cols=None):
+        """Prepare DataFrame in NeuralProphet's expected format (ds, y, ...)."""
+        out = df[[date_col, target_col]].copy()
+        out.columns = ["ds", "y"]
+        out["ds"] = pd.to_datetime(out["ds"])
+        if covariate_cols:
+            for col in covariate_cols:
+                out[col] = df[col].values
+        return out
+
+    def fit(self, train_df, target_col="y", date_col="ds", covariate_cols=None):
+        self._covariate_cols = covariate_cols
+        self._date_col = date_col
+        self._target_col = target_col
+
+        self._model = self._build_model()
+        np_df = self._prep_df(train_df, date_col, target_col, covariate_cols)
+
+        if covariate_cols:
+            for col in covariate_cols:
+                self._model = self._model.add_lagged_regressor(col)
+
+        metrics_df = self._model.fit(np_df, freq="D")
+
+        fitted_df = self._model.predict(np_df)
+        fitted_vals = fitted_df["yhat1"].values
+        actual = np_df["y"].values
+        residuals = actual - fitted_vals
+
+        self._fit_result = FitResult(
+            fitted_values=fitted_vals,
+            residuals=residuals,
+            model_object=self._model,
+            metadata={"final_metrics": metrics_df},
+        )
+        return self._fit_result
+
+    def predict(self, target_df, target_col="y", date_col="ds", covariate_cols=None):
+        covariate_cols = covariate_cols or self._covariate_cols
+        date_col = date_col or self._date_col
+        target_col = target_col or self._target_col
+
+        np_df = self._prep_df(target_df, date_col, target_col, covariate_cols)
+        forecast = self._model.predict(np_df)
+
+        actual = target_df[target_col].values if target_col in target_df.columns else None
+
+        return PredictionResult(
+            dates=target_df[date_col].values,
+            predicted=forecast["yhat1"].values,
+            actual=actual,
+        )
+
+    def clone_fresh(self):
+        return NeuralProphetModel(params=self.params.copy())

@@ -1,0 +1,85 @@
+# Default configuration for ITS two-stage modular analysis
+# Override any section via config_overrides dict or a custom YAML file.
+
+data:
+  date_col: "ds"
+  target_col: "y"
+  covariate_cols: []
+
+periods:
+  test_days: 365
+  holdout_days: 365
+
+models:
+  arima:
+    max_p: 5
+    max_d: 2
+    max_q: 5
+    seasonal: true
+    m: 7
+    stepwise: true
+    suppress_warnings: true
+
+  neuralprophet:
+    n_lags: 14
+    yearly_seasonality: true
+    weekly_seasonality: true
+    learning_rate: 0.01
+    epochs: 100
+    batch_size: 64
+
+  prophet_xgb:
+    prophet:
+      yearly_seasonality: true
+      weekly_seasonality: true
+      daily_seasonality: false
+      changepoint_prior_scale: 0.05
+    xgb:
+      n_estimators: 300
+      max_depth: 6
+      learning_rate: 0.05
+      subsample: 0.8
+      colsample_bytree: 0.8
+      min_child_weight: 3
+
+  prophet_then_xgb:
+    prophet:
+      yearly_seasonality: true
+      weekly_seasonality: true
+      daily_seasonality: false
+      changepoint_prior_scale: 0.05
+    xgb:
+      n_estimators: 300
+      max_depth: 6
+      learning_rate: 0.05
+      subsample: 0.8
+      colsample_bytree: 0.8
+      min_child_weight: 3
+
+bootstrap:
+  method: "mbb"
+  n_sim: 1000
+  block_length: 14
+  ci_method: "quantile"
+  ci_level: 0.95
+  n_jobs: 1
+
+metrics:
+  seasonality: 7
+
+output:
+  format: "csv"
+  plot_dpi: 150
+  plot_figsize: [14, 6]
+
+parallel:
+  n_jobs: 1
+
+excess_periods: []
+# Example excess_periods:
+# - name: "First 30 days"
+#   start_offset: 0
+#   end_offset: 30
+# - name: "Full holdout"
+#   start_offset: 0
+#   end_offset: null

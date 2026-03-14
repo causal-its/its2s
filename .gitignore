@@ -1,0 +1,88 @@
+# R artifacts
+.RData
+.Rhistory
+.Rproj.user/
+*.Rproj
+
+# Data files (raw, processed, spatial)
+*.dta
+*.rds
+*.RDS
+*.csv
+*.tsv
+*.nc
+*.nc4
+*.tif
+*.tiff
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.gpkg
+*.parquet
+*.feather
+*.xlsx
+*.xls
+*.sav
+*.por
+
+# Compressed archives (often contain large data)
+*.zip
+*.tar
+*.tar.gz
+*.gz
+*.7z
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Archive folder
+archive/
+
+# IDE / tool configs
+.claude/
+.cursor/
+.vscode/
+.idea/
+
+# Quarto / R Markdown build artifacts
+_site/
+_book/
+*_cache/
+*_files/
+*.html
+*.pdf
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Python packaging / build artifacts
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Prophet / NeuralProphet model cache
+neuralprophet_checkpoint/
+
+# joblib / model cache directories
+.joblib_cache/
