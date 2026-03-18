@@ -1,0 +1,14 @@
+ED_evac_rate_enc_cardio:
+  prophet:
+    yearly_seasonality: true
+    weekly_seasonality: true
+    daily_seasonality: false
+    changepoint_prior_scale: 0.05
+  xgb:
+    n_estimators: 15
+    max_depth: 7
+    min_child_weight: 9
+    learning_rate: 1.245818
+    subsample: 0.967677
+    colsample_bytree: 0.625
+    gamma: 1.05869476
