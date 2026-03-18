@@ -86,3 +86,6 @@ neuralprophet_checkpoint/
 
 # joblib / model cache directories
 .joblib_cache/
+
+# Paths
+paths.py

@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "its2s"
@@ -9,6 +9,7 @@ description = "Modular Interrupted Time Series counterfactual analysis with MBB 
 requires-python = ">=3.10"
 dependencies = [
     "pandas>=2.0",
+    "pyarrow>=14.0",
     "numpy>=1.24",
     "scipy>=1.10",
     "scikit-learn>=1.3",
