@@ -55,8 +55,19 @@ y[intervention_idx:] += 8
 
 df = pd.DataFrame({"ds": dates, "y": y})
 
+# Dummy covariates for later experiments (e.g. covariate_cols in fit / pipeline)
+n = len(df)
+df["covar_linear"] = np.linspace(0, 1, n) + rng.normal(0, 0.02, n)
+df["covar_dow"] = df["ds"].dt.dayofweek.astype(np.float64)
+df["covar_noise"] = rng.normal(0, 1, n)
+
+_dummy_parquet = path_project / "understanding_its2s" / "dummy_data.parquet"
+_dummy_parquet.parent.mkdir(parents=True, exist_ok=True)
+df.to_parquet(_dummy_parquet, index=False)
+
 print("=" * 60)
 print("2a. Simulated dataset  (with +8/day intervention effect)")
+print(f"    dummy_data.parquet -> {_dummy_parquet}")
 print("=" * 60)
 print(df.tail())
 
