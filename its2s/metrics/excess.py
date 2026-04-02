@@ -150,19 +150,33 @@ def calculate_excess(bootstrap_result, intervention_date, periods_config=None,
     return ExcessResult(daily_excess=daily_excess, period_excess=period_excess)
 
 
-def calc_ate_summary(daily_excess):
-    """Calculate Average Treatment Effect summary from daily excess.
+def calc_ate_summary(excess_result):
+    """Calculate Average Treatment Effect summary from excess results.
+
+    CIs are derived from the period-level "Full holdout" row, which
+    computes total excess per bootstrap simulation and then takes
+    percentiles. This correctly accounts for temporal correlation in
+    bootstrap predictions (unlike summing independent daily CIs).
 
     Parameters
     ----------
-    daily_excess : pd.DataFrame
-        Daily excess DataFrame from calculate_excess.
+    excess_result : ExcessResult or pd.DataFrame
+        Either an ExcessResult (preferred) or a daily_excess DataFrame
+        (legacy fallback -- CIs will be approximate).
 
     Returns
     -------
     pd.DataFrame
         Summary with total ATE and mean daily ATE.
     """
+    # Accept either ExcessResult or bare DataFrame for backwards compat
+    if isinstance(excess_result, ExcessResult):
+        daily_excess = excess_result.daily_excess
+        period_excess = excess_result.period_excess
+    else:
+        daily_excess = excess_result
+        period_excess = pd.DataFrame()
+
     if daily_excess.empty:
         return pd.DataFrame()
 
@@ -170,26 +184,32 @@ def calc_ate_summary(daily_excess):
     total_excess = daily_excess["excess"].sum()
     mean_daily = total_excess / n
 
-    # SE from excess CIs (approximate)
-    total_ci_width = daily_excess["excess_ci_hi"].sum() - daily_excess["excess_ci_lo"].sum()
-    se_total = total_ci_width / (2 * 1.96)
-    se_daily = se_total / n
+    # Try to get CIs from the period-level "Full holdout" row, which
+    # sums per-simulation predictions then takes percentiles (correct).
+    fullhold = period_excess[period_excess["period"] == "Full holdout"] if not period_excess.empty else pd.DataFrame()
+
+    if not fullhold.empty:
+        row = fullhold.iloc[0]
+        total_ci_lo = float(row["excess_ci_lo"])
+        total_ci_hi = float(row["excess_ci_hi"])
+    else:
+        # Fallback: sum daily CIs (approximate, assumes independence)
+        total_ci_lo = daily_excess["excess_ci_lo"].sum()
+        total_ci_hi = daily_excess["excess_ci_hi"].sum()
 
     return pd.DataFrame([
         {
             "metric": "Total ATE",
             "estimate": total_excess,
-            "se": se_total,
-            "ci_lo": daily_excess["excess_ci_lo"].sum(),
-            "ci_hi": daily_excess["excess_ci_hi"].sum(),
+            "ci_lo": total_ci_lo,
+            "ci_hi": total_ci_hi,
             "n_days": n,
         },
         {
             "metric": "Mean Daily ATE",
             "estimate": mean_daily,
-            "se": se_daily,
-            "ci_lo": daily_excess["excess_ci_lo"].sum() / n,
-            "ci_hi": daily_excess["excess_ci_hi"].sum() / n,
+            "ci_lo": total_ci_lo / n,
+            "ci_hi": total_ci_hi / n,
             "n_days": n,
         },
     ])

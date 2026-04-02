@@ -93,7 +93,7 @@ class PipelineResult:
         lines.append(f"  RMSE={mt.rmse:.4f}  MAE={mt.mae:.4f}  "
                       f"MAPE={mt.mape:.2f}%  R2={mt.r2:.4f}")
         if not self.excess_table.daily_excess.empty:
-            ate = calc_ate_summary(self.excess_table.daily_excess)
+            ate = calc_ate_summary(self.excess_table)
             total = ate[ate["metric"] == "Total ATE"].iloc[0]
             daily = ate[ate["metric"] == "Mean Daily ATE"].iloc[0]
             lines.append("")
@@ -313,7 +313,7 @@ def run_single_its(
             out / f"{model_name}_metrics.csv",
         )
         if not excess_table.daily_excess.empty:
-            ate = calc_ate_summary(excess_table.daily_excess)
+            ate = calc_ate_summary(excess_table)
             save_ate_summary(ate, out / f"{model_name}_ate_summary.csv")
 
         logger.info("Outputs saved to %s", out)

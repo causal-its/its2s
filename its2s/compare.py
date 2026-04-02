@@ -79,7 +79,7 @@ def compare_models(df, intervention_date, model_names=None,
             }
 
             if not result.excess_table.daily_excess.empty:
-                ate = calc_ate_summary(result.excess_table.daily_excess)
+                ate = calc_ate_summary(result.excess_table)
                 total_row = ate[ate["metric"] == "Total ATE"].iloc[0]
                 daily_row = ate[ate["metric"] == "Mean Daily ATE"].iloc[0]
                 row["total_ate"] = total_row["estimate"]
