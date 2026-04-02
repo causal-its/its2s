@@ -5,6 +5,7 @@ data:
   date_col: "ds"
   target_col: "y"
   covariate_cols: []
+  missing_data: "error"   # "error", "drop", or "interpolate"
 
 periods:
   test_days: 365
