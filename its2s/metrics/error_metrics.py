@@ -83,7 +83,8 @@ def compute_metrics(actual, predicted, training_actual=None, seasonality=7):
 
     # SMAPE
     denom = np.abs(actual) + np.abs(predicted)
-    smape_vals = np.where(denom > 0, 2 * abs_errors / denom, 0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        smape_vals = np.where(denom > 0, 2 * abs_errors / denom, 0)
     smape = float(np.nanmean(smape_vals) * 100)
 
     # MASE
