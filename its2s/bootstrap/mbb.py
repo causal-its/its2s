@@ -102,6 +102,8 @@ class MovingBlockBootstrap(BaseBootstrap):
         pred_matrix = np.full((n_dates, self.n_sim), np.nan)
         n_successful = 0
 
+        log_interval = max(1, self.n_sim // 10)
+
         try:
             results = Parallel(n_jobs=self.n_jobs, prefer="threads")(
                 delayed(_single_mbb_sim)(
@@ -115,6 +117,11 @@ class MovingBlockBootstrap(BaseBootstrap):
                 if preds is not None and len(preds) == n_dates:
                     pred_matrix[:, i] = preds
                     n_successful += 1
+                if (i + 1) % log_interval == 0:
+                    logger.info(
+                        "MBB progress: %d / %d simulations processed.",
+                        i + 1, self.n_sim,
+                    )
         except Exception:
             logger.warning("Parallel MBB failed, falling back to sequential.")
             for i in range(self.n_sim):
@@ -129,8 +136,21 @@ class MovingBlockBootstrap(BaseBootstrap):
                         n_successful += 1
                 except Exception:
                     continue
+                if (i + 1) % log_interval == 0:
+                    logger.info(
+                        "MBB progress: %d / %d simulations processed "
+                        "(%d successful).",
+                        i + 1, self.n_sim, n_successful,
+                    )
 
         logger.info("MBB: %d / %d simulations successful.", n_successful, self.n_sim)
+
+        if n_successful < self.n_sim // 2:
+            logger.warning(
+                "Only %d / %d bootstrap simulations succeeded. "
+                "CIs may be unreliable.",
+                n_successful, self.n_sim,
+            )
 
         conf_lo, conf_hi = self.calculate_ci(
             pred_matrix, point_pred.predicted, self.ci_method, self.ci_level
