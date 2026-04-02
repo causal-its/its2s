@@ -39,12 +39,10 @@ def compare_models(df, intervention_date, model_names=None,
     tuple[pd.DataFrame, dict[str, PipelineResult]]
         (comparison_table, results_dict)
     """
-    from .pipeline import run_single_its, _ensure_registry, _MODEL_REGISTRY
-
-    _ensure_registry()
+    from .pipeline import run_single_its, _get_available_model_names
 
     if model_names is None:
-        model_names = list(_MODEL_REGISTRY.keys())
+        model_names = _get_available_model_names()
 
     results = {}
     rows = []

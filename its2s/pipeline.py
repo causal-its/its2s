@@ -20,48 +20,59 @@ from .outputs.tables import save_ate_summary, save_excess_table, save_metrics_ta
 
 logger = logging.getLogger(__name__)
 
-# Model registry
-_MODEL_REGISTRY = {}
+# Lazy model import map: model name -> (module path, class name)
+_MODEL_IMPORT_MAP = {
+    "arima": (".models.arima", "ARIMAModel"),
+    "neuralprophet": (".models.neuralprophet", "NeuralProphetModel"),
+    "prophet_xgb": (".models.prophet_xgb", "ProphetXGBHybridModel"),
+    "prophet_then_xgb": (".models.prophet_then_xgb", "ProphetThenXGBModel"),
+}
+
+_MODEL_CACHE = {}
 
 
-_NEURALPROPHET_IMPORT_FAILED = False
+def _get_available_model_names():
+    """Return list of model names whose dependencies can be imported."""
+    available = []
+    for name in _MODEL_IMPORT_MAP:
+        try:
+            _get_model_class(name)
+            available.append(name)
+        except ImportError:
+            pass
+    return available
 
 
-def _ensure_registry():
-    global _NEURALPROPHET_IMPORT_FAILED
-    if _MODEL_REGISTRY:
-        return
+def _get_model_class(model_name):
+    """Import and cache a single model class by name."""
+    if model_name in _MODEL_CACHE:
+        return _MODEL_CACHE[model_name]
 
-    from .models.arima import ARIMAModel
-    _MODEL_REGISTRY["arima"] = ARIMAModel
+    if model_name not in _MODEL_IMPORT_MAP:
+        raise ValueError(
+            f"Unknown model '{model_name}'. "
+            f"Known models: {list(_MODEL_IMPORT_MAP.keys())}"
+        )
 
+    module_path, class_name = _MODEL_IMPORT_MAP[model_name]
     try:
-        from .models.neuralprophet import NeuralProphetModel
-        _MODEL_REGISTRY["neuralprophet"] = NeuralProphetModel
-    except ImportError:
-        _NEURALPROPHET_IMPORT_FAILED = True
-        logger.warning("NeuralProphet not available (missing dependency).")
+        import importlib
+        mod = importlib.import_module(module_path, package=__package__)
+        cls = getattr(mod, class_name)
+    except ImportError as e:
+        raise ImportError(
+            f"Model '{model_name}' is not available because a required "
+            f"dependency could not be imported: {e}. "
+            f"Check that all dependencies for this model are installed."
+        ) from e
 
-    from .models.prophet_xgb import ProphetXGBHybridModel
-    _MODEL_REGISTRY["prophet_xgb"] = ProphetXGBHybridModel
-
-    from .models.prophet_then_xgb import ProphetThenXGBModel
-    _MODEL_REGISTRY["prophet_then_xgb"] = ProphetThenXGBModel
+    _MODEL_CACHE[model_name] = cls
+    return cls
 
 
 def _get_model(model_name, params):
-    _ensure_registry()
-    if model_name not in _MODEL_REGISTRY:
-        if model_name == "neuralprophet" and _NEURALPROPHET_IMPORT_FAILED:
-            raise ImportError(
-                "Model 'neuralprophet' is not available because the "
-                "neuralprophet package is not installed. Install it with: "
-                "pip install neuralprophet"
-            )
-        raise ValueError(
-            f"Unknown model '{model_name}'. Available: {list(_MODEL_REGISTRY.keys())}"
-        )
-    return _MODEL_REGISTRY[model_name](params=params)
+    cls = _get_model_class(model_name)
+    return cls(params=params)
 
 
 @dataclass
