@@ -8,17 +8,7 @@ from prophet import Prophet
 from xgboost import XGBRegressor
 
 from .base import BaseModel, FitResult, PredictionResult
-
-
-def _make_time_features(df, date_col="ds"):
-    """Generate numeric time features from a date column."""
-    dates = pd.to_datetime(df[date_col])
-    out = pd.DataFrame(index=df.index)
-    out["day_of_week"] = dates.dt.dayofweek
-    out["day_of_year"] = dates.dt.dayofyear
-    out["month"] = dates.dt.month
-    out["week_of_year"] = dates.dt.isocalendar().week.astype(int).values
-    return out
+from .utils import make_time_features as _make_time_features
 
 
 class ProphetXGBHybridModel(BaseModel):
