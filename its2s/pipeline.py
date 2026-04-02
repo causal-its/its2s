@@ -11,6 +11,7 @@ import pandas as pd
 from .bootstrap.mbb import MovingBlockBootstrap
 from .settings import get_model_config, load_config
 from .data_prep import prepare_splits
+from .validation import validate_inputs
 from .metrics.error_metrics import compute_metrics, MetricsResult
 from .metrics.excess import ExcessResult, calc_ate_summary, calculate_excess
 from .outputs.plots import plot_counterfactual
@@ -110,6 +111,10 @@ def run_single_its(
     date_col = date_col or config["data"]["date_col"]
     target_col = target_col or config["data"]["target_col"]
     covariate_cols = covariate_cols if covariate_cols is not None else config["data"]["covariate_cols"]
+
+    # 1b. Validate inputs
+    validate_inputs(df, intervention_date, date_col, target_col,
+                    covariate_cols, model_name)
 
     # 2. Prepare splits
     splits = prepare_splits(
