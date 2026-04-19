@@ -26,6 +26,8 @@ _DEFAULT_N_TRIALS = {
 }
 
 # Search spaces: param_name -> (low, high, dtype, scale)
+# These are the tuning ranges used by the Latin hypercube sampler. They are
+# independent of params.yaml, which holds default (non-tuning) fallback values.
 #   dtype : "int" or "float"
 #   scale : "linear" or "log" (log produces a log-uniform distribution)
 #

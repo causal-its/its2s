@@ -1,5 +1,15 @@
-# Default configuration for ITS two-stage modular analysis
-# Override any section via config_overrides dict or a custom YAML file.
+# Default configuration for ITS two-stage modular analysis.
+# These are fallback values used when no override is provided. They are NOT
+# hyperparameter search ranges. Tuning search spaces (bounds, scale, dtype)
+# are defined in its2s/tuning.py (_ARIMA_SPACE, _NEURALPROPHET_SPACE, etc.).
+#
+# Override precedence (highest wins):
+#   1. config_overrides dict passed at runtime
+#   2. custom YAML file passed via config_path
+#   3. this file
+#
+# After tuning, inject best_params via:
+#   run_single_its(..., config_overrides={"models": {model_name: result.best_params}})
 
 data:
   date_col: "ds"
