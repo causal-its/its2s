@@ -3,12 +3,12 @@
 # Dependencies: pandas, numpy
 
 import logging
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
-from .data_prep import prepare_splits
 from .metrics.error_metrics import MetricsResult, compute_metrics
 from .settings import get_model_config, load_config
 
@@ -55,28 +55,47 @@ class CVResult:
 
 def time_series_cv(df, intervention_date, model_name="arima",
                    n_folds=5, test_days=90, min_train_days=365,
+                   skip_days=0, cv_end_date=None,
                    date_col=None, target_col=None, covariate_cols=None,
                    config_path=None, config_overrides=None):
     """Evaluate a model using expanding-window time-series cross-validation.
 
-    Folds are constructed using only the pre-intervention data.
-    Each fold trains on an expanding window and tests on the next
-    `test_days` days.
+    Folds are non-overlapping by construction. Consecutive validation windows
+    are separated by `skip_days` (matching the R reference implementation's
+    `skip` parameter). The CV window can be capped at `cv_end_date` to prevent
+    tuning or evaluation folds from touching the held-out test period defined
+    by `run_single_its`.
+
+    Fold layout (train = expanding, test = fixed width):
+
+        |------ min_train_days ------|-- test_days --|-- skip_days --|-- test_days --|...
+        fold 1: train [0, T0),         test [T0, T0+test_days)
+        fold 2: train [0, T0+test_days+skip_days), test [T0+test_days+skip_days, ...)
+        ...
 
     Parameters
     ----------
     df : pd.DataFrame
         Full time series dataset.
     intervention_date : str or pd.Timestamp
-        Only pre-intervention data is used for CV.
+        CV uses only pre-intervention data (or data before cv_end_date if set).
     model_name : str
         Model to evaluate.
     n_folds : int
-        Number of CV folds.
+        Maximum number of CV folds to attempt.
     test_days : int
-        Days in each test fold.
+        Length of each validation window in days.
     min_train_days : int
-        Minimum training days for the first fold.
+        Minimum training window for the first fold.
+    skip_days : int
+        Gap in days between the end of one validation window and the start of
+        the next. Set to 0 for adjacent non-overlapping folds. The R reference
+        uses skip = "12 months" (365 days for daily data).
+    cv_end_date : str or pd.Timestamp, optional
+        Upper bound on the data used for CV. Must be <= intervention_date.
+        Use intervention_date - test_days to keep CV folds out of the
+        held-out evaluation window used by run_single_its.
+        Defaults to intervention_date (all pre-intervention data).
     date_col : str, optional
         Date column name. Defaults to config value.
     target_col : str, optional
@@ -105,39 +124,44 @@ def time_series_cv(df, intervention_date, model_name="arima",
     df[date_col] = pd.to_datetime(df[date_col])
     df = df.sort_values(date_col).reset_index(drop=True)
 
-    # Use only pre-intervention data for CV
-    pre_df = df[df[date_col] < intervention_date].copy()
-    n_pre = len(pre_df)
+    # Determine upper bound for CV data
+    if cv_end_date is not None:
+        cv_end_date = pd.Timestamp(cv_end_date)
+        if cv_end_date > intervention_date:
+            raise ValueError(
+                f"cv_end_date ({cv_end_date.date()}) must be <= "
+                f"intervention_date ({intervention_date.date()})."
+            )
+        cv_df = df[df[date_col] < cv_end_date].copy()
+    else:
+        cv_df = df[df[date_col] < intervention_date].copy()
 
-    if n_pre < min_train_days + test_days:
+    n_cv = len(cv_df)
+
+    if n_cv < min_train_days + test_days:
         raise ValueError(
             f"Not enough pre-intervention data for CV. Need at least "
-            f"{min_train_days + test_days} rows, have {n_pre}."
+            f"{min_train_days + test_days} rows, have {n_cv}."
         )
 
-    # Compute fold boundaries
-    available_for_testing = n_pre - min_train_days
-    step = max(1, available_for_testing // n_folds)
+    model_params = get_model_config(config, model_name)
     fold_results = []
 
-    model_params = get_model_config(config, model_name)
-
+    # Non-overlapping fold layout: each fold's test window starts at
+    # min_train_days + i * (test_days + skip_days), guaranteeing a gap of
+    # skip_days between the end of fold i and the start of fold i+1.
     for i in range(n_folds):
-        train_end_idx = min_train_days + i * step
-        test_end_idx = min(train_end_idx + test_days, n_pre)
+        test_start_idx = min_train_days + i * (test_days + skip_days)
+        test_end_idx = test_start_idx + test_days
 
-        if train_end_idx >= n_pre or test_end_idx <= train_end_idx:
+        if test_end_idx > n_cv:
             break
 
-        train_fold = pre_df.iloc[:train_end_idx].copy()
-        test_fold = pre_df.iloc[train_end_idx:test_end_idx].copy()
-
-        if len(test_fold) == 0:
-            break
+        train_fold = cv_df.iloc[:test_start_idx].copy()
+        test_fold = cv_df.iloc[test_start_idx:test_end_idx].copy()
 
         model = _get_model(model_name, model_params)
         try:
-            import warnings
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 model.fit(train_fold, target_col=target_col,

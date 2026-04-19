@@ -211,6 +211,8 @@ def tune_model(
     n_folds: int = 5,
     test_days: int = 365,
     min_train_days: int = 730,
+    skip_days: int = 0,
+    cv_end_date=None,
     metric: str = "rmse",
     config_path=None,
     n_jobs: int = 1,
@@ -223,7 +225,11 @@ def tune_model(
     combination with the lowest mean CV RMSE (or MAE) is selected.
 
     R reference CV settings: 5 folds, 12-month validation window, 2-year initial
-    training window. Adjust n_folds, test_days, and min_train_days accordingly.
+    training window, 12-month skip between folds. Matching those settings:
+        n_folds=5, test_days=365, min_train_days=730, skip_days=365
+
+    To prevent tuning from seeing the held-out evaluation window that
+    run_single_its uses, set cv_end_date to intervention_date minus test_days.
 
     Parameters
     ----------
@@ -242,6 +248,14 @@ def tune_model(
         Validation window per fold in days.
     min_train_days : int
         Minimum training window for the first fold in days.
+    skip_days : int
+        Gap in days between consecutive fold validation windows. Set to 365 to
+        match the R reference (skip = "12 months"). Defaults to 0 (adjacent folds).
+    cv_end_date : str or pd.Timestamp, optional
+        Upper bound on data used for CV folds. Must be <= intervention_date.
+        Pass intervention_date - pd.Timedelta(days=test_days) to prevent tuning
+        folds from overlapping with the held-out evaluation window.
+        Defaults to None (use all pre-intervention data).
     metric : str
         Objective for selecting the best parameter set. "rmse" or "mae".
     config_path : str or Path, optional
@@ -260,9 +274,15 @@ def tune_model(
 
     Examples
     --------
-    Tune and apply best params:
+    Tune and apply best params (R-matched CV settings, leakage-free):
 
-        result = tune_model(df, "2025-01-07", "prophet_xgb", n_trials=5, n_folds=2)
+        import pandas as pd
+        result = tune_model(
+            df, "2025-01-07", "prophet_xgb",
+            n_trials=100, n_folds=5,
+            test_days=365, min_train_days=730, skip_days=365,
+            cv_end_date=pd.Timestamp("2025-01-07") - pd.Timedelta(days=365),
+        )
         run_single_its(
             df, "2025-01-07",
             model_name="prophet_xgb",
@@ -287,6 +307,8 @@ def tune_model(
         "n_folds":        n_folds,
         "test_days":      test_days,
         "min_train_days": min_train_days,
+        "skip_days":      skip_days,
+        "cv_end_date":    cv_end_date,
         "config_path":    config_path,
     }
 
