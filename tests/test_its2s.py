@@ -860,6 +860,89 @@ class TestCrossValidation:
             assert fold.n_test > 0
             assert fold.train_end < fold.test_start
 
+    # --- skip_days: non-overlapping fold windows ---
+
+    def test_skip_days_zero_folds_are_adjacent(self):
+        # With skip_days=0, fold i+1 test starts exactly where fold i test ends.
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=610)
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=3, test_days=60, min_train_days=180,
+                                skip_days=0, config_overrides=self._CV_CFG)
+        for i in range(len(result.folds) - 1):
+            gap = (result.folds[i + 1].test_start
+                   - result.folds[i].test_end).days
+            # Adjacent folds: gap should be exactly 1 day (end is inclusive,
+            # start of next is the following day) or 0 if timestamps coincide.
+            assert gap <= 1, f"Folds {i} and {i+1} have unexpected gap {gap}"
+
+    def test_skip_days_nonzero_enforces_gap(self):
+        from its2s.cross_validation import time_series_cv
+        skip = 30
+        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=611)
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=3, test_days=60, min_train_days=180,
+                                skip_days=skip, config_overrides=self._CV_CFG)
+        for i in range(len(result.folds) - 1):
+            gap = (result.folds[i + 1].test_start
+                   - result.folds[i].test_end).days
+            assert gap >= skip - 1, (
+                f"Gap between folds {i} and {i+1} ({gap} days) "
+                f"should be >= skip_days ({skip})"
+            )
+
+    def test_skip_days_folds_never_overlap(self):
+        # No two fold test windows should share any dates.
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=612)
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=4, test_days=60, min_train_days=180,
+                                skip_days=0, config_overrides=self._CV_CFG)
+        for i in range(len(result.folds) - 1):
+            assert result.folds[i].test_end < result.folds[i + 1].test_start, (
+                f"Fold {i} test end ({result.folds[i].test_end}) "
+                f">= fold {i+1} test start ({result.folds[i+1].test_start})"
+            )
+
+    # --- cv_end_date: scoping CV to training window ---
+
+    def test_cv_end_date_excludes_later_data(self):
+        # No fold test window should reach or exceed cv_end_date.
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=613)
+        cv_end = intv - pd.Timedelta(days=90)
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=3, test_days=60, min_train_days=180,
+                                cv_end_date=cv_end,
+                                config_overrides=self._CV_CFG)
+        for fold in result.folds:
+            assert fold.test_end < cv_end, (
+                f"Fold test_end {fold.test_end} reached cv_end_date {cv_end}"
+            )
+
+    def test_cv_end_date_after_intervention_raises(self):
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=614)
+        with pytest.raises(ValueError, match="cv_end_date"):
+            time_series_cv(df, intv, model_name="arima",
+                           n_folds=2, test_days=60, min_train_days=180,
+                           cv_end_date=intv + pd.Timedelta(days=10),
+                           config_overrides=self._CV_CFG)
+
+    def test_cv_end_date_none_uses_intervention_date(self):
+        # Default (cv_end_date=None) should behave identically to passing
+        # cv_end_date=intervention_date.
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=615)
+        r1 = time_series_cv(df, intv, model_name="arima",
+                            n_folds=2, test_days=60, min_train_days=180,
+                            cv_end_date=None, config_overrides=self._CV_CFG)
+        r2 = time_series_cv(df, intv, model_name="arima",
+                            n_folds=2, test_days=60, min_train_days=180,
+                            cv_end_date=intv, config_overrides=self._CV_CFG)
+        assert len(r1.folds) == len(r2.folds)
+        assert abs(r1.mean_rmse - r2.mean_rmse) < 1e-9
+
 
 # ===================================================================
 # Model Comparison
