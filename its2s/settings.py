@@ -62,3 +62,17 @@ def get_model_config(config, model_name):
     dict
     """
     return copy.deepcopy(config.get("models", {}).get(model_name, {}))
+
+
+def get_tuning_config(config):
+    """Extract the tuning defaults section.
+
+    Parameters
+    ----------
+    config : dict
+
+    Returns
+    -------
+    dict
+    """
+    return copy.deepcopy(config.get("tuning", {}))

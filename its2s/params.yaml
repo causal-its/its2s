@@ -86,3 +86,17 @@ excess_periods: []
 # - name: "Full holdout"
 #   start_offset: 0
 #   end_offset: null
+
+tuning:
+  n_folds: 5
+  test_days: 365
+  min_train_days: 730
+  metric: "rmse"
+  n_jobs: 1
+  seed: 42
+  # Default trial counts per model (matches R reference grid sizes)
+  model_defaults:
+    arima: 100
+    neuralprophet: 75
+    prophet_xgb: 100
+    prophet_then_xgb: 100
