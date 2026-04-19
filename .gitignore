@@ -99,3 +99,4 @@ archive/
 # Packaged teaching artifacts for understanding_its2s walkthrough
 # (override the broad *.csv and *.ipynb excludes above)
 !understanding_its2s/*.ipynb
+!understanding_its2s/data/dummy_data.csv
