@@ -58,7 +58,6 @@ class BaseBootstrap(ABC):
             conf_hi = np.nanpercentile(pred_matrix, 100 * (1 - alpha / 2), axis=1)
         elif method == "symmetric_sd":
             sd = np.nanstd(pred_matrix, axis=1)
-            z = 1.96  # approximate for 0.95
             from scipy.stats import norm
             z = norm.ppf(1 - alpha / 2)
             conf_lo = point_est - z * sd

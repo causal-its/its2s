@@ -84,8 +84,19 @@ htmlcov/
 # Prophet / NeuralProphet model cache
 neuralprophet_checkpoint/
 
+# PyTorch Lightning training logs (created by NeuralProphet)
+lightning_logs/
+
 # joblib / model cache directories
 .joblib_cache/
 
 # Paths
 paths.py
+
+# Archive
+archive/
+
+# Packaged teaching artifacts for understanding_its2s walkthrough
+# (override the broad *.csv and *.ipynb excludes above)
+!understanding_its2s/*.ipynb
+!understanding_its2s/data/dummy_data.csv

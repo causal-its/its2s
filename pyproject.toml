@@ -17,6 +17,7 @@ dependencies = [
     "pmdarima>=2.0",
     "prophet>=1.1",
     "xgboost>=2.0",
+    "setuptools>=68.0,<71",
     "neuralprophet>=0.8",
     "matplotlib>=3.7",
     "pyyaml>=6.0",
@@ -27,6 +28,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-cov"]
+
+[tool.pytest.ini_options]
+markers = ["slow: long-running statistical validation tests"]
 
 [tool.setuptools.packages.find]
 include = ["its2s*"]

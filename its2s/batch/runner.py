@@ -68,7 +68,7 @@ def run_batch(series_list, config_path=None, output_dir="output",
     -------
     list[PipelineResult]
     """
-    from ..config import load_config
+    from ..settings import load_config
     config = load_config(config_path)
     n_sim = config["bootstrap"]["n_sim"]
 

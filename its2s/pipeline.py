@@ -9,8 +9,10 @@ from pathlib import Path
 import pandas as pd
 
 from .bootstrap.mbb import MovingBlockBootstrap
+from .diagnostics import compute_diagnostics, DiagnosticsResult
 from .settings import get_model_config, load_config
 from .data_prep import prepare_splits
+from .validation import validate_inputs
 from .metrics.error_metrics import compute_metrics, MetricsResult
 from .metrics.excess import ExcessResult, calc_ate_summary, calculate_excess
 from .outputs.plots import plot_counterfactual
@@ -18,37 +20,59 @@ from .outputs.tables import save_ate_summary, save_excess_table, save_metrics_ta
 
 logger = logging.getLogger(__name__)
 
-# Model registry
-_MODEL_REGISTRY = {}
+# Lazy model import map: model name -> (module path, class name)
+_MODEL_IMPORT_MAP = {
+    "arima": (".models.arima", "ARIMAModel"),
+    "neuralprophet": (".models.neuralprophet", "NeuralProphetModel"),
+    "prophet_xgb": (".models.prophet_xgb", "ProphetXGBHybridModel"),
+    "prophet_then_xgb": (".models.prophet_then_xgb", "ProphetThenXGBModel"),
+}
+
+_MODEL_CACHE = {}
 
 
-def _ensure_registry():
-    if _MODEL_REGISTRY:
-        return
+def _get_available_model_names():
+    """Return list of model names whose dependencies can be imported."""
+    available = []
+    for name in _MODEL_IMPORT_MAP:
+        try:
+            _get_model_class(name)
+            available.append(name)
+        except ImportError:
+            pass
+    return available
 
-    from .models.arima import ARIMAModel
-    _MODEL_REGISTRY["arima"] = ARIMAModel
 
+def _get_model_class(model_name):
+    """Import and cache a single model class by name."""
+    if model_name in _MODEL_CACHE:
+        return _MODEL_CACHE[model_name]
+
+    if model_name not in _MODEL_IMPORT_MAP:
+        raise ValueError(
+            f"Unknown model '{model_name}'. "
+            f"Known models: {list(_MODEL_IMPORT_MAP.keys())}"
+        )
+
+    module_path, class_name = _MODEL_IMPORT_MAP[model_name]
     try:
-        from .models.neuralprophet import NeuralProphetModel
-        _MODEL_REGISTRY["neuralprophet"] = NeuralProphetModel
-    except ImportError:
-        logger.warning("NeuralProphet not available (missing dependency).")
+        import importlib
+        mod = importlib.import_module(module_path, package=__package__)
+        cls = getattr(mod, class_name)
+    except ImportError as e:
+        raise ImportError(
+            f"Model '{model_name}' is not available because a required "
+            f"dependency could not be imported: {e}. "
+            f"Check that all dependencies for this model are installed."
+        ) from e
 
-    from .models.prophet_xgb import ProphetXGBHybridModel
-    _MODEL_REGISTRY["prophet_xgb"] = ProphetXGBHybridModel
-
-    from .models.prophet_then_xgb import ProphetThenXGBModel
-    _MODEL_REGISTRY["prophet_then_xgb"] = ProphetThenXGBModel
+    _MODEL_CACHE[model_name] = cls
+    return cls
 
 
 def _get_model(model_name, params):
-    _ensure_registry()
-    if model_name not in _MODEL_REGISTRY:
-        raise ValueError(
-            f"Unknown model '{model_name}'. Available: {list(_MODEL_REGISTRY.keys())}"
-        )
-    return _MODEL_REGISTRY[model_name](params=params)
+    cls = _get_model_class(model_name)
+    return cls(params=params)
 
 
 @dataclass
@@ -62,6 +86,47 @@ class PipelineResult:
     metrics_test: MetricsResult
     excess_table: ExcessResult
     config: dict
+    diagnostics: DiagnosticsResult | None = None
+
+    def summary(self):
+        """Return a human-readable summary string."""
+        lines = []
+        lines.append(f"Model: {self.model_name}")
+        lines.append(f"Bootstrap: {self.config['bootstrap']['n_sim']} simulations, "
+                      f"{self.bootstrap_result.n_successful} successful")
+        lines.append("")
+        lines.append("Train metrics:")
+        mt = self.metrics_train
+        lines.append(f"  RMSE={mt.rmse:.4f}  MAE={mt.mae:.4f}  "
+                      f"MAPE={mt.mape:.2f}%  R2={mt.r2:.4f}")
+        lines.append("Test metrics:")
+        mt = self.metrics_test
+        lines.append(f"  RMSE={mt.rmse:.4f}  MAE={mt.mae:.4f}  "
+                      f"MAPE={mt.mape:.2f}%  R2={mt.r2:.4f}")
+        if not self.excess_table.daily_excess.empty:
+            ate = calc_ate_summary(self.excess_table)
+            total = ate[ate["metric"] == "Total ATE"].iloc[0]
+            daily = ate[ate["metric"] == "Mean Daily ATE"].iloc[0]
+            lines.append("")
+            lines.append(f"Total ATE: {total['estimate']:.2f} "
+                          f"[{total['ci_lo']:.2f}, {total['ci_hi']:.2f}]")
+            lines.append(f"Mean Daily ATE: {daily['estimate']:.4f} "
+                          f"[{daily['ci_lo']:.4f}, {daily['ci_hi']:.4f}]")
+            lines.append(f"Holdout days: {int(total['n_days'])}")
+        if self.diagnostics:
+            d = self.diagnostics
+            lines.append("")
+            lines.append("Residual diagnostics:")
+            lines.append(f"  Mean={d.residual_mean:.4f}  "
+                          f"Std={d.residual_std:.4f}")
+            lines.append(f"  ACF(1)={d.acf_lag1:.3f}  "
+                          f"ACF(7)={d.acf_lag7:.3f}  "
+                          f"ACF(14)={d.acf_lag14:.3f}")
+            if not pd.isna(d.ljung_box_pvalue):
+                lines.append(f"  Ljung-Box(10) p={d.ljung_box_pvalue:.4f}")
+            if d.shapiro_pvalue is not None:
+                lines.append(f"  Shapiro-Wilk p={d.shapiro_pvalue:.4f}")
+        return "\n".join(lines)
 
 
 def run_single_its(
@@ -111,6 +176,40 @@ def run_single_its(
     target_col = target_col or config["data"]["target_col"]
     covariate_cols = covariate_cols if covariate_cols is not None else config["data"]["covariate_cols"]
 
+    # 1b. Validate inputs
+    validate_inputs(df, intervention_date, date_col, target_col,
+                    covariate_cols, model_name)
+
+    # 1c. Handle missing data in target column
+    missing_strategy = config["data"].get("missing_data", "error")
+    n_missing = df[target_col].isna().sum()
+    if n_missing > 0:
+        if missing_strategy == "error":
+            raise ValueError(
+                f"Target column '{target_col}' contains {n_missing} missing "
+                f"values. Set data.missing_data to 'drop' or 'interpolate' "
+                f"in config to handle them automatically."
+            )
+        elif missing_strategy == "drop":
+            logger.warning(
+                "Dropping %d rows with missing values in '%s'.",
+                n_missing, target_col,
+            )
+            df = df.dropna(subset=[target_col]).copy()
+        elif missing_strategy == "interpolate":
+            logger.warning(
+                "Interpolating %d missing values in '%s' using linear method.",
+                n_missing, target_col,
+            )
+            df = df.copy()
+            df[target_col] = df[target_col].interpolate(method="linear")
+            df[target_col] = df[target_col].bfill().ffill()
+        else:
+            raise ValueError(
+                f"Unknown missing_data strategy: '{missing_strategy}'. "
+                f"Expected 'error', 'drop', or 'interpolate'."
+            )
+
     # 2. Prepare splits
     splits = prepare_splits(
         df,
@@ -129,12 +228,26 @@ def run_single_its(
     model_params = get_model_config(config, model_name)
     model = _get_model(model_name, model_params)
 
+    # 3b. Warn about long-horizon ARIMA forecasts (B5)
+    holdout_days = config["periods"]["holdout_days"]
+    if model_name == "arima" and holdout_days > 90:
+        logger.warning(
+            "ARIMA with holdout_days=%d: ARIMA point forecasts converge to "
+            "the unconditional mean over long horizons, which can bias the "
+            "counterfactual estimate. Consider prophet_xgb or "
+            "prophet_then_xgb for holdout windows beyond 90 days.",
+            holdout_days,
+        )
+
     # 4. Fit model
     logger.info("Fitting %s model...", model_name)
     fit_result = model.fit(
         splits.train_df, target_col=target_col,
         date_col=date_col, covariate_cols=covariate_cols or None,
     )
+
+    # 4b. Compute residual diagnostics
+    diag = compute_diagnostics(fit_result, model_name)
 
     # 5. Bootstrap CIs
     boot_config = config["bootstrap"]
@@ -197,6 +310,7 @@ def run_single_its(
             metrics_test=metrics_test,
             excess_table=excess_table,
             config=config,
+            diagnostics=diag,
         )
 
         plot_counterfactual(
@@ -210,7 +324,7 @@ def run_single_its(
             out / f"{model_name}_metrics.csv",
         )
         if not excess_table.daily_excess.empty:
-            ate = calc_ate_summary(excess_table.daily_excess)
+            ate = calc_ate_summary(excess_table)
             save_ate_summary(ate, out / f"{model_name}_ate_summary.csv")
 
         logger.info("Outputs saved to %s", out)
@@ -223,4 +337,5 @@ def run_single_its(
         metrics_test=metrics_test,
         excess_table=excess_table,
         config=config,
+        diagnostics=diag,
     )

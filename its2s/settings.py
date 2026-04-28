@@ -7,6 +7,8 @@ from pathlib import Path
 
 import yaml
 
+# params.yaml holds default (fallback) values, not hyperparameter search ranges.
+# Tuning search spaces live in tuning.py (_ARIMA_SPACE, _NEURALPROPHET_SPACE, etc.).
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "params.yaml"
 
 
@@ -62,3 +64,17 @@ def get_model_config(config, model_name):
     dict
     """
     return copy.deepcopy(config.get("models", {}).get(model_name, {}))
+
+
+def get_tuning_config(config):
+    """Extract the tuning defaults section.
+
+    Parameters
+    ----------
+    config : dict
+
+    Returns
+    -------
+    dict
+    """
+    return copy.deepcopy(config.get("tuning", {}))
