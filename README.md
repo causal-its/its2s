@@ -2,66 +2,94 @@
 
 Modular interrupted time series (ITS) counterfactual analysis with moving-block bootstrap confidence intervals.
 
-This README covers **standalone use**: install the package into a Python environment, point it at your own tabular dataset (e.g. Parquet or CSV), and optionally save plots and tables to a folder you choose.
+Use this package in your own Python environment: load a tabular time series (or simulate one), call `run_single_its`, and optionally write plots and tables to a folder.
 
-## Install
+## Setup
 
-From the directory that contains this file (the repository root, where `pyproject.toml` lives):
+**Requirements:** Python 3.10+ (see `requires-python` in `pyproject.toml`). Dependency versions live in `pyproject.toml`; the commands below install the package and those dependencies in one go.
 
-```bash
-pip install .
-```
+From the **repository root** (where `pyproject.toml` and `environment.yml` live):
 
-Editable install (changes to the source code are visible without reinstalling):
+**Conda (recommended if you use conda):** creates the `its2s` environment and installs this repo in editable mode.
 
 ```bash
-pip install -e .
+conda env create -f environment.yml
+conda activate its2s
 ```
 
-Use the **same virtual environment** whenever you run your scripts. The folder you run from can be anywhere on your machine; imports work because `its2s` is installed into that environment, not because your script lives next to this repo.
+If you don’t use conda, create a virtual environment (or use your usual setup) and run `pip install -e .` from the repo root—the same command works for any active Python you intend to use. Use `pip install .` instead if you don’t want an editable install.
 
-Dependencies are declared in `pyproject.toml`. You can also mirror them with `pip install -r requirements.txt` if you use that file elsewhere.
+Use the **same environment** whenever you run scripts. After setup, your working directory can be anywhere; imports work because `its2s` is installed into that environment.
 
-## Minimal script
+## Minimal example using simulated data
+
+The pipeline expects a sorted time index and outcome column (defaults: `ds`, `y`). Defaults in `its2s/params.yaml` use a one-year pre-intervention test window and one-year post-intervention holdout, with 1000 bootstrap draws—fine for real analyses but slow for a smoke test. The example below builds a fake daily series and passes **`config_overrides`** so it finishes in a reasonable time.
 
 ```python
-from pathlib import Path
-
+import numpy as np
 import pandas as pd
 from its2s import run_single_its
 
-# --- Input path: anywhere you like (absolute or relative to how you launch Python) ---
-data_path = Path("/path/to/your/project/dummy_data.parquet")
-df = pd.read_parquet(data_path)
+rng = np.random.default_rng(42)
+intervention_date = "2022-06-01"
+
+# using shorter windows + fewer bootstrap draws than package defaults for a faster demo
+config_overrides = {
+    "periods": {"test_days": 90, "holdout_days": 90},
+    "bootstrap": {"n_sim": 100},
+}
+
+dates = pd.date_range("2020-01-01", "2022-09-30", freq="D")
+n = len(dates)
+t = np.arange(n)
+seasonal = 10 * np.sin(2 * np.pi * t / 365.25)
+trend = 0.02 * t
+noise = rng.normal(0, 2, n)
+y = 100 + trend + seasonal + noise
+
+# small level shift after the intervention (forcing excess vs counterfactual to be non-trivial).
+intervention = pd.Timestamp(intervention_date)
+y = y.astype(float)
+y[dates >= intervention] += 5
+
+df = pd.DataFrame({"ds": dates, "y": y})
 
 result = run_single_its(
     df,
-    intervention_date="2022-01-15",
-    model_name="prophet_xgb",
-    output_dir=Path("/path/to/your/project/its2s_outputs"),
+    intervention_date=intervention_date,
+    model_name="arima",
+    config_overrides=config_overrides,
     seed=42,
 )
 ```
 
-If `output_dir` is omitted, the pipeline still runs and returns a `PipelineResult`; **no files are written**.
+Omit `output_dir` if you only need the returned results within your session. To save outputs:
 
-## Input data: paths and column names
+```python
+from pathlib import Path
 
-**Where you specify the input path**
+result = run_single_its(
+    df,
+    intervention_date=intervention_date,
+    model_name="arima",
+    config_overrides=config_overrides,
+    output_dir=Path("./its2s_outputs"),
+    seed=42,
+)
+```
 
-- The package does not take a dataset path as a built-in CLI argument. You load the table yourself with pandas (or Polars, then `.to_pandas()`), then pass the `DataFrame` to `run_single_its`.
-- Use any path that makes sense for your project: `Path(__file__).resolve().parent / "dummy_data.parquet"`, an absolute path, or an environment variable.
+## Your own data
 
-**Expected columns (defaults)**
+**Loading:** The package does not read paths for you. Load with pandas, then pass the `DataFrame` to `run_single_its`. Paths can be absolute, relative to the script, or from an environment variable—whatever fits your project.
 
-Default settings assume:
+**Columns (defaults):**
 
 | Role        | Default column name |
-|------------|----------------------|
-| Time index | `ds`                 |
-| Outcome    | `y`                  |
+|-------------|---------------------|
+| Time index  | `ds`                |
+| Outcome     | `y`                 |
 
-Defaults come from `its2s/params.yaml` under `data:`. To use different names without editing that file, pass arguments:
+Defaults come from `its2s/params.yaml` under `data:`. To rename without editing that file:
 
 ```python
 run_single_its(
@@ -74,20 +102,20 @@ run_single_its(
 
 The date column is parsed as datetime and the series is sorted by time inside the pipeline.
 
-## Output paths
+## Outputs
 
-**Where you specify the output location:** pass `output_dir` as a string or `pathlib.Path`. The directory is created if it does not exist (`parents=True`).
+Pass `output_dir` as a string or `pathlib.Path`; the directory is created if needed (`parents=True`).
 
-**Files written** (names include the `model_name` you passed, e.g. `prophet_xgb`):
+**Files written** (names include `model_name`, e.g. `arima`):
 
 | File | Description |
 |------|-------------|
 | `{model_name}_counterfactual.png` | Counterfactual plot |
 | `{model_name}_excess.csv` | Excess (observed vs counterfactual) table |
 | `{model_name}_metrics.csv` | Train/test error metrics |
-| `{model_name}_ate_summary.csv` | Average treatment effect–style summary (written when daily excess is non-empty) |
+| `{model_name}_ate_summary.csv` | ATE-style summary (when daily excess is non-empty) |
 
-All paths are under the single `output_dir` you provide.
+All paths sit under the single `output_dir` you provide.
 
 ## Covariates for fitting and prediction
 
@@ -105,7 +133,7 @@ Covariates are **extra numeric (or otherwise model-supported) columns** in the s
    )
    ```
 
-2. **In YAML** copied or merged with the defaults — set `data.covariate_cols` in a file you pass as `config_path`:
+2. **In YAML** merged with defaults — set `data.covariate_cols` in a file you pass as `config_path`:
 
    ```yaml
    data:
@@ -125,7 +153,7 @@ Covariates are **extra numeric (or otherwise model-supported) columns** in the s
 **Requirements**
 
 - Every name in `covariate_cols` must exist as a column in `df`.
-- Values should be defined for all rows that fall in the **test + holdout** window used internally (from `periods.test_days` before the intervention through `periods.holdout_days` after), so prediction and bootstrap over that horizon have the covariate path. Missing handling is model-specific; avoid unexpected NaNs in those windows unless your chosen model tolerates them.
+- Values should be defined for all rows in the **test + holdout** window (from `periods.test_days` before the intervention through `periods.holdout_days` after), so prediction and bootstrap over that horizon have the covariate path. Missing handling is model-specific; avoid unexpected NaNs in those windows unless your chosen model tolerates them.
 
 To tune horizons or bootstrap settings, merge a YAML file via `config_path` or pass a nested dict as `config_overrides` (see `run_single_its` in `its2s/pipeline.py`). The built-in default YAML is `its2s/params.yaml` inside the installed package.
 

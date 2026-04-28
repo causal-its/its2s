@@ -18,37 +18,92 @@ from .outputs.tables import save_ate_summary, save_excess_table, save_metrics_ta
 
 logger = logging.getLogger(__name__)
 
-# Model registry
-_MODEL_REGISTRY = {}
+# Lazily import only the requested model so e.g. `arima` does not load xgboost.
+_MODEL_CLASS_CACHE = {}
 
 
-def _ensure_registry():
-    if _MODEL_REGISTRY:
-        return
+def _is_xgboost_native_load_failure(err):
+    """True when xgboost's shared library failed (e.g. missing libomp on macOS)."""
+    name = type(err).__name__
+    if "XGBoost" in name:
+        return True
+    msg = str(err).lower()
+    return "libxgboost" in msg or "libomp" in msg or "openmp" in msg
 
-    from .models.arima import ARIMAModel
-    _MODEL_REGISTRY["arima"] = ARIMAModel
 
-    try:
-        from .models.neuralprophet import NeuralProphetModel
-        _MODEL_REGISTRY["neuralprophet"] = NeuralProphetModel
-    except ImportError:
-        logger.warning("NeuralProphet not available (missing dependency).")
+def _get_model_class(model_name):
+    if model_name in _MODEL_CLASS_CACHE:
+        return _MODEL_CLASS_CACHE[model_name]
 
-    from .models.prophet_xgb import ProphetXGBHybridModel
-    _MODEL_REGISTRY["prophet_xgb"] = ProphetXGBHybridModel
+    if model_name == "arima":
+        try:
+            from .models.arima import ARIMAModel
 
-    from .models.prophet_then_xgb import ProphetThenXGBModel
-    _MODEL_REGISTRY["prophet_then_xgb"] = ProphetThenXGBModel
+            cls = ARIMAModel
+        except ImportError as e:
+            raise ImportError(
+                "ARIMA backend could not be imported. Install project dependencies "
+                "(e.g. pip install -e . from the its2s repo, or pip install pmdarima statsmodels)."
+            ) from e
+    elif model_name == "neuralprophet":
+        try:
+            from .models.neuralprophet import NeuralProphetModel
+
+            cls = NeuralProphetModel
+        except ImportError as e:
+            logger.warning("NeuralProphet not available (missing dependency).")
+            raise ImportError(
+                "NeuralProphet could not be imported. Install with: pip install neuralprophet"
+            ) from e
+    elif model_name == "prophet_xgb":
+        try:
+            from .models.prophet_xgb import ProphetXGBHybridModel
+
+            cls = ProphetXGBHybridModel
+        except ImportError as e:
+            raise ImportError(
+                "prophet_xgb could not be imported. Install Python deps with: "
+                "pip install prophet xgboost (or reinstall its2s from pyproject.toml)."
+            ) from e
+        except Exception as e:
+            if _is_xgboost_native_load_failure(e):
+                raise RuntimeError(
+                    "XGBoost could not load its native library (common on macOS without OpenMP). "
+                    "Install OpenMP, e.g. brew install libomp  or  "
+                    "conda install -c conda-forge llvm-openmp"
+                ) from e
+            raise
+    elif model_name == "prophet_then_xgb":
+        try:
+            from .models.prophet_then_xgb import ProphetThenXGBModel
+
+            cls = ProphetThenXGBModel
+        except ImportError as e:
+            raise ImportError(
+                "prophet_then_xgb could not be imported. Install Python deps with: "
+                "pip install prophet xgboost (or reinstall its2s from pyproject.toml)."
+            ) from e
+        except Exception as e:
+            if _is_xgboost_native_load_failure(e):
+                raise RuntimeError(
+                    "XGBoost could not load its native library (common on macOS without OpenMP). "
+                    "Install OpenMP, e.g. brew install libomp  or  "
+                    "conda install -c conda-forge llvm-openmp"
+                ) from e
+            raise
+    else:
+        raise ValueError(
+            "Unknown model "
+            f"'{model_name}'. Available: arima, neuralprophet, prophet_xgb, prophet_then_xgb"
+        )
+
+    _MODEL_CLASS_CACHE[model_name] = cls
+    return cls
 
 
 def _get_model(model_name, params):
-    _ensure_registry()
-    if model_name not in _MODEL_REGISTRY:
-        raise ValueError(
-            f"Unknown model '{model_name}'. Available: {list(_MODEL_REGISTRY.keys())}"
-        )
-    return _MODEL_REGISTRY[model_name](params=params)
+    model_cls = _get_model_class(model_name)
+    return model_cls(params=params)
 
 
 @dataclass

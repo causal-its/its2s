@@ -30,3 +30,8 @@ dev = ["pytest>=7.0", "pytest-cov"]
 
 [tool.setuptools.packages.find]
 include = ["its2s*"]
+
+# Ship default YAML next to the package; otherwise pip installs lack params.yaml
+# and load_config() raises FileNotFoundError outside an editable install.
+[tool.setuptools.package-data]
+its2s = ["params.yaml"]
