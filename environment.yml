@@ -1,0 +1,15 @@
+# Conda environment for its2s. Create from the repository root:
+#   conda env create -f environment.yml
+#   conda activate its2s
+#
+# Update an existing env after editing this file:
+#   conda env update -f environment.yml --prune
+
+name: its2s
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -e .
