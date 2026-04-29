@@ -1,0 +1,90 @@
+site_name: its2s
+site_description: Interrupted time series counterfactual analysis with moving-block bootstrap confidence intervals
+repo_url: https://github.com/arnabkdey/its2s
+repo_name: arnabkdey/its2s
+edit_uri: edit/main/docs/
+
+nav:
+  - Home: index.md
+  - Setup: installation.md
+  - Quick Start: quickstart.md
+  - Tutorials:
+      - "1. Data splitting": tutorials/step1_data_splitting.ipynb
+      - "2. Cross-validation": tutorials/step2_cross_validation.ipynb
+      - "3. Hyperparameter tuning": tutorials/step3_hyperparameter_tuning.ipynb
+      - "4a. Model: ARIMA": tutorials/step4_model_arima.ipynb
+      - "4b. Model: NeuralProphet": tutorials/step4_model_neuralprophet.ipynb
+      - "4c. Model: Prophet+XGB": tutorials/step4_model_prophet_xgb.ipynb
+      - "4d. Model: Prophet-then-XGB": tutorials/step4_model_prophet_then_xgb.ipynb
+      - "5. Bootstrap (MBB)": tutorials/step5_bootstrap_mbb.ipynb
+      - "6. Full workflow": tutorials/step6_full_workflow.ipynb
+  - API Reference: api.md
+  - Citation: citation.md
+
+theme:
+  name: material
+  logo: assets/its2s_logo.svg
+  favicon: assets/its2s_logo.svg
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+
+extra_css:
+  - stylesheets/extra.css
+
+hooks:
+  - scripts/mkdocs_copy_tutorials.py
+
+plugins:
+  - search
+  - mkdocs-jupyter:
+      execute: false
+      include_source: true
+      ignore_h1_titles: true
+      show_input: true
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: numpy
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            merge_init_into_class: true
+            show_signature_annotations: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true

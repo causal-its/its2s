@@ -1,0 +1,98 @@
+/* its2s palette
+ * Logo blues:
+ *   #4a6b8a  darkest blue
+ *   #6b8ba6  medium-dark blue
+ *   #8ca8bf  medium-light blue
+ *   #b8cad9  lightest blue
+ * Accent:
+ *   #712B13  rust red (used minimally for hover / active)
+ */
+
+:root {
+  --its2s-blue-darkest: #4a6b8a;
+  --its2s-blue-mid-dark: #6b8ba6;
+  --its2s-blue-mid-light: #8ca8bf;
+  --its2s-blue-lightest: #b8cad9;
+  --its2s-rust: #712b13;
+}
+
+/* ---------- Light scheme ---------- */
+[data-md-color-scheme="default"] {
+  /* Header, search bar background, top nav */
+  --md-primary-fg-color: var(--its2s-blue-darkest);
+  --md-primary-fg-color--light: var(--its2s-blue-mid-dark);
+  --md-primary-fg-color--dark: #3a5670;
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: rgba(255, 255, 255, 0.7);
+
+  /* Links, hover, copy-button hover, current section dot, search highlight.
+     Rust is used here, kept minimal because Material applies the accent only
+     to interactive states. */
+  --md-accent-fg-color: var(--its2s-rust);
+  --md-accent-fg-color--transparent: rgba(113, 43, 19, 0.1);
+  --md-accent-bg-color: #ffffff;
+  --md-accent-bg-color--light: rgba(255, 255, 255, 0.7);
+}
+
+/* ---------- Dark scheme (slate) ---------- */
+[data-md-color-scheme="slate"] {
+  /* On dark backgrounds, push the primary a bit lighter so the header reads
+     well against the slate body. */
+  --md-primary-fg-color: var(--its2s-blue-mid-dark);
+  --md-primary-fg-color--light: var(--its2s-blue-mid-light);
+  --md-primary-fg-color--dark: var(--its2s-blue-darkest);
+
+  /* On slate, rust loses contrast. Use the lightest blue as accent so links
+     and hover states stay legible. */
+  --md-accent-fg-color: var(--its2s-blue-lightest);
+  --md-accent-fg-color--transparent: rgba(184, 202, 217, 0.15);
+}
+
+/* Subtle blue tint on top-of-page admonition / note callouts. Optional. */
+.md-typeset .admonition.note,
+.md-typeset details.note {
+  border-color: var(--its2s-blue-mid-light);
+}
+
+/* Small visual flourish: thin rust underline on the active nav tab so the
+   accent appears once, not everywhere. */
+.md-tabs__link--active {
+  border-bottom: 2px solid var(--its2s-rust);
+}
+
+/* Bigger header logo. Material caps the logo at 1.2rem by default; we let it
+   breathe and bump the header height to match so the layout doesn't squish. */
+.md-header__button.md-logo {
+  margin: 0.2rem;
+  padding: 0.2rem;
+}
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  width: 2.6rem;
+  height: 2.6rem;
+}
+
+/* Home-page hero: logo and title sit side-by-side, left-justified.
+   Selectors are nested under .md-typeset so they out-rank Material's defaults. */
+.md-typeset .its2s-hero {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin: 2rem 0 1.5rem;
+}
+.md-typeset .its2s-hero-logo {
+  width: 180px;
+  height: auto;
+  flex-shrink: 0;
+}
+.md-typeset h1.its2s-hero-title {
+  margin: 0;
+  line-height: 1;
+  font-size: 5em;
+  font-weight: 400;
+  color: var(--its2s-blue-darkest);
+  letter-spacing: -0.02em;
+}
+[data-md-color-scheme="slate"] .md-typeset h1.its2s-hero-title {
+  color: var(--its2s-blue-lightest);
+}
