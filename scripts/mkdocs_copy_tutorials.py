@@ -28,6 +28,9 @@ def _sync_dir(src: Path, dst: Path, suffixes: tuple[str, ...]) -> None:
 
 def on_pre_build(config):  # noqa: D401 -- MkDocs hook signature
     """Copy notebooks and the figures/ directory into docs/tutorials/."""
-    _sync_dir(SRC, DST, suffixes=(".ipynb", ".md"))
+    # Only ship notebooks. Markdown files (e.g. understanding_its2s/README.md)
+    # would otherwise land in docs/tutorials/ and trip mkdocs --strict because
+    # they are not listed in the nav.
+    _sync_dir(SRC, DST, suffixes=(".ipynb",))
     _sync_dir(SRC / "figures", DST / "figures", suffixes=(".png", ".jpg", ".jpeg", ".svg"))
     return config

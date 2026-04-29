@@ -32,15 +32,11 @@
       <path d="M -80 30 Q -40 25, 0 30 Q 10 32, 20 35 Q 40 38, 60 45 Q 70 50, 80 55 L 80 25 Q 70 22, 60 20 Q 40 18, 20 20 Q 10 17, 0 15 Q -40 10, -80 15 Z" 
             fill="#b8cad9"/>
       
-      <!-- Interruption marker - dark rust red vertical accent -->
+      <!-- Interruption marker - dark rust red vertical line only -->
       <line x1="20" y1="-60" x2="20" y2="60" 
             stroke="#712B13" 
             stroke-width="2.5" 
             opacity="0.9"/>
-      
-      <!-- Small geometric accent at interruption - rust red filled -->
-      <circle cx="20" cy="0" r="4" 
-              fill="#712B13"/>
     </g>
   </g>
 </svg>

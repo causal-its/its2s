@@ -88,20 +88,24 @@ class TuningResult:
     Attributes
     ----------
     model_name : str
+        Name of the tuned model (e.g. ``"arima"``).
     best_params : dict
-        Nested param dict ready to pass as config_overrides["models"][model_name].
+        Nested param dict ready to pass as ``config_overrides["models"][model_name]``.
     best_rmse : float
         Mean CV RMSE of the best parameter combination.
     best_std_rmse : float
         Std dev of CV RMSE across folds for the best combination.
     trials_df : pd.DataFrame
-        One row per trial. Columns: trial_id, <param cols>, mean_rmse, std_rmse,
-        mean_mae, mean_mape, mean_r2, n_folds_ok.
+        One row per trial. Columns: ``trial_id``, ``<param cols>``, ``mean_rmse``,
+        ``std_rmse``, ``mean_mae``, ``mean_mape``, ``mean_r2``, ``n_folds_ok``.
     n_trials : int
+        Number of parameter combinations evaluated.
     n_folds : int
+        Number of expanding-window CV folds used per trial.
     metric : str
-        Objective used for selection ("rmse" or "mae").
+        Objective used for selection (``"rmse"`` or ``"mae"``).
     seed : int
+        Random seed driving the Latin hypercube sample.
     """
 
     model_name: str
