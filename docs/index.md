@@ -7,7 +7,7 @@
 
 Use this package in your own Python environment: load a tabular time series (or simulate one), call `run_single_its`, and write plots and tables to a folder.
 
-For comprehensive methodological details, see [insert paper link here when applicable].
+For comprehensive methodological details, see [insert paper link here when applicable]. TEST
 
 ## Why `its2s`?
 
