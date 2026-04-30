@@ -1,0 +1,17 @@
+# Netlify build configuration for the its2s documentation site.
+#
+# `command` runs in Netlify's Ubuntu build image with the Python version pinned
+# below. It installs the package + docs extras (mkdocs-material, mkdocs-jupyter,
+# mkdocstrings) and then runs the same strict build CI uses, so any warning
+# (broken link, missing nav target, autorefs miss) fails the deploy.
+#
+# `publish = "site"` matches MkDocs' default output directory. The pre-build
+# hook in scripts/mkdocs_copy_tutorials.py copies notebooks into docs/tutorials
+# during the build, so no extra steps are required here.
+
+[build]
+  command = "python -m pip install --upgrade pip && pip install -e '.[docs]' && mkdocs build --clean --strict"
+  publish = "site"
+
+[build.environment]
+  PYTHON_VERSION = "3.12"

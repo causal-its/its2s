@@ -8,7 +8,7 @@ The easiest way to install `its2s` is from PyPI.
 You can also build `its2s` from source with: 
 
 ```bash
-git clone https://github.com/arnabkdey/its2s.git
+git clone https://github.com/causal-its/its2s.git
 cd its2s
 python -m pip install
 ```

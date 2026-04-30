@@ -1,7 +1,7 @@
 site_name: its2s
 site_description: Interrupted time series counterfactual analysis with moving-block bootstrap confidence intervals
-repo_url: https://github.com/arnabkdey/its2s
-repo_name: arnabkdey/its2s
+repo_url: https://github.com/causal-its/its2s
+repo_name: causal-its/its2s
 edit_uri: edit/main/docs/
 
 nav:
