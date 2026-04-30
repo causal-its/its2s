@@ -48,4 +48,4 @@ from its2s import compare_models, tune_model
 
 ## Getting help and contributing
 
-If you have a question, feature request, or bug, please [open an issue](https://github.com/arnabkdey/its2s/issues).
+If you have a question, feature request, or bug, please [open an issue](https://github.com/causal-its/its2s/issues).
