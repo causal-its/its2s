@@ -77,7 +77,32 @@ def _get_model(model_name, params):
 
 @dataclass
 class PipelineResult:
-    """Output of a single ITS pipeline run."""
+    """Output of a single ITS pipeline run.
+
+    Attributes
+    ----------
+    model_name : str
+        Name of the model used (e.g. "prophet_xgb", "arima").
+    fit_result : FitResult
+        Raw fit output from the model, including fitted_values and residuals
+        on the training period.
+    bootstrap_result : BootstrapCIResult
+        MBB output for the prediction period (test + holdout). Exposes
+        dates, actual, predicted, conf_lo, conf_hi, pred_matrix, and
+        n_successful.
+    metrics_train : MetricsResult
+        RMSE, MAE, MAPE, and R2 computed on the training period.
+    metrics_test : MetricsResult
+        RMSE, MAE, MAPE, and R2 computed on the test period.
+    excess_table : ExcessResult
+        Day-level excess estimates with CIs for the holdout period. Pass to
+        calc_ate_summary() to get total and mean-daily ATE with CIs.
+    config : dict
+        Full resolved config dict used for this run.
+    diagnostics : DiagnosticsResult or None
+        Residual diagnostics (Ljung-Box, Shapiro-Wilk, ACF lags). None if
+        diagnostics could not be computed.
+    """
 
     model_name: str
     fit_result: object

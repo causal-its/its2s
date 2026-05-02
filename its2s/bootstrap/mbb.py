@@ -146,10 +146,11 @@ class MovingBlockBootstrap(BaseBootstrap):
         logger.info("MBB: %d / %d simulations successful.", n_successful, self.n_sim)
 
         if n_successful < self.n_sim // 2:
-            logger.warning(
-                "Only %d / %d bootstrap simulations succeeded. "
+            warnings.warn(
+                f"Only {n_successful} / {self.n_sim} bootstrap simulations succeeded. "
                 "CIs may be unreliable.",
-                n_successful, self.n_sim,
+                UserWarning,
+                stacklevel=2,
             )
 
         conf_lo, conf_hi = self.calculate_ci(
