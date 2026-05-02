@@ -22,24 +22,6 @@ periods:
   holdout_days: 365
 
 models:
-  arima:
-    max_p: 5
-    max_d: 2
-    max_q: 5
-    seasonal: true
-    m: 7
-    stepwise: true
-    suppress_warnings: true
-
-  neuralprophet:
-    n_lags: 14
-    yearly_seasonality: true
-    weekly_seasonality: true
-    learning_rate: 0.01
-    epochs: 100
-    batch_size: 64
-    freq: "D"   # pandas offset alias; override for non-daily series (e.g. "W", "MS")
-
   prophet_xgb:
     prophet:
       yearly_seasonality: true
@@ -69,6 +51,24 @@ models:
       colsample_bytree: 0.8
       min_child_weight: 3
       gamma: 1.0
+
+  neuralprophet:
+    n_lags: 14
+    yearly_seasonality: true
+    weekly_seasonality: true
+    learning_rate: 0.01
+    epochs: 100
+    batch_size: 64
+    freq: "D"   # pandas offset alias; override for non-daily series (e.g. "W", "MS")
+
+  arima:
+    max_p: 5
+    max_d: 2
+    max_q: 5
+    seasonal: true
+    m: 7
+    stepwise: true
+    suppress_warnings: true
 
 bootstrap:
   method: "mbb"
@@ -107,7 +107,7 @@ tuning:
   seed: 42
   # Default trial counts per model (matches R reference grid sizes)
   model_defaults:
-    arima: 100
-    neuralprophet: 75
     prophet_xgb: 100
     prophet_then_xgb: 100
+    neuralprophet: 75
+    arima: 100

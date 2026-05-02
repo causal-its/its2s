@@ -55,7 +55,7 @@ _MODEL_NAMES_MARKS = [
             reason="neuralprophet not installed",
         ),
     )
-    for name in ["arima", "prophet_xgb", "prophet_then_xgb", "neuralprophet"]
+    for name in ["prophet_xgb", "prophet_then_xgb", "neuralprophet", "arima"]
 ]
 
 

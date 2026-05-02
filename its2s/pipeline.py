@@ -23,10 +23,10 @@ logger = logging.getLogger(__name__)
 
 # Lazy model import map: model name -> (module path, class name)
 _MODEL_IMPORT_MAP = {
-    "arima": (".models.arima", "ARIMAModel"),
-    "neuralprophet": (".models.neuralprophet", "NeuralProphetModel"),
     "prophet_xgb": (".models.prophet_xgb", "ProphetXGBHybridModel"),
     "prophet_then_xgb": (".models.prophet_then_xgb", "ProphetThenXGBModel"),
+    "neuralprophet": (".models.neuralprophet", "NeuralProphetModel"),
+    "arima": (".models.arima", "ARIMAModel"),
 }
 
 _MODEL_CACHE = {}
@@ -161,7 +161,7 @@ def run_single_its(
     target_col=None,
     date_col=None,
     covariate_cols=None,
-    model_name="arima",
+    model_name="prophet_xgb",
     config_path=None,
     config_overrides=None,
     output_dir=None,
@@ -182,7 +182,7 @@ def run_single_its(
     covariate_cols : list[str], optional
         Covariate column names. Defaults to config value.
     model_name : str
-        Model to use. One of: arima, neuralprophet, prophet_xgb, prophet_then_xgb.
+        Model to use. One of: prophet_xgb, prophet_then_xgb, neuralprophet, arima.
     config_path : str or Path, optional
         Path to custom YAML config.
     config_overrides : dict, optional

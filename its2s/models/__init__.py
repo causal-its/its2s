@@ -19,8 +19,8 @@ def __getattr__(name):
 
 
 __all__ = [
-    "ARIMAModel",
-    "NeuralProphetModel",
     "ProphetXGBHybridModel",
     "ProphetThenXGBModel",
+    "NeuralProphetModel",
+    "ARIMAModel",
 ]

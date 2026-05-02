@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 # Default trial counts per model, matching the R reference implementation:
 # ARIMA=100, NNETAR (-> NeuralProphet)=75, prophet_xgb=100
 _DEFAULT_N_TRIALS = {
-    "arima":            100,
-    "neuralprophet":    75,
     "prophet_xgb":      100,
     "prophet_then_xgb": 100,
+    "neuralprophet":    75,
+    "arima":            100,
 }
 
 # Search spaces: param_name -> (low, high, dtype, scale)
@@ -74,10 +74,10 @@ _PROPHET_XGB_SPACE = {
 }
 
 _SEARCH_SPACES = {
-    "arima":            _ARIMA_SPACE,
-    "neuralprophet":    _NEURALPROPHET_SPACE,
     "prophet_xgb":      _PROPHET_XGB_SPACE,
     "prophet_then_xgb": _PROPHET_XGB_SPACE,
+    "neuralprophet":    _NEURALPROPHET_SPACE,
+    "arima":            _ARIMA_SPACE,
 }
 
 
