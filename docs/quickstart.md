@@ -36,7 +36,7 @@ df = pd.DataFrame({"ds": dates, "y": y})
 result = run_single_its(
     df,
     intervention_date=intervention_date,
-    model_name="arima",
+    model_name="prophet_xgb",
     config_overrides=config_overrides,
     seed=42,
 )
@@ -50,7 +50,7 @@ from pathlib import Path
 result = run_single_its(
     df,
     intervention_date=intervention_date,
-    model_name="arima",
+    model_name="prophet_xgb",
     config_overrides=config_overrides,
     output_dir=Path("./its2s_outputs"),
     seed=42,
@@ -85,7 +85,7 @@ The date column is parsed as datetime and the series is sorted by time inside th
 
 Pass `output_dir` as a string or `pathlib.Path`; the directory is created if needed (`parents=True`).
 
-**Files written** (names include `model_name`, e.g. `arima`):
+**Files written** (names include `model_name`, e.g. `prophet_xgb`):
 
 | File | Description |
 |------|-------------|
@@ -140,4 +140,4 @@ To tune horizons or bootstrap settings, merge a YAML file via `config_path` or p
 
 - **`config_path`**: optional YAML merged on top of package defaults (`its2s/params.yaml`).
 - **`config_overrides`**: optional dict merged last (highest priority).
-- **`model_name`**: one of `arima`, `prophet_xgb`, `prophet_then_xgb`, `neuralprophet` (subject to optional dependencies).
+- **`model_name`**: one of `prophet_xgb`, `prophet_then_xgb`, `neuralprophet`, `arima` (subject to optional dependencies).

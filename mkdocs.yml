@@ -12,10 +12,10 @@ nav:
       - "1. Data splitting": tutorials/step1_data_splitting.ipynb
       - "2. Cross-validation": tutorials/step2_cross_validation.ipynb
       - "3. Hyperparameter tuning": tutorials/step3_hyperparameter_tuning.ipynb
-      - "4a. Model: ARIMA": tutorials/step4_model_arima.ipynb
-      - "4b. Model: NeuralProphet": tutorials/step4_model_neuralprophet.ipynb
-      - "4c. Model: Prophet+XGB": tutorials/step4_model_prophet_xgb.ipynb
-      - "4d. Model: Prophet-then-XGB": tutorials/step4_model_prophet_then_xgb.ipynb
+      - "4a. Model: Prophet+XGB": tutorials/step4a_model_prophet_xgb.ipynb
+      - "4b. Model: Prophet-then-XGB": tutorials/step4b_model_prophet_then_xgb.ipynb
+      - "4c. Model: NeuralProphet": tutorials/step4c_model_neuralprophet.ipynb
+      - "4d. Model: ARIMA": tutorials/step4d_model_arima.ipynb
       - "5. Bootstrap (MBB)": tutorials/step5_bootstrap_mbb.ipynb
       - "6. Full workflow": tutorials/step6_full_workflow.ipynb
   - API Reference: api.md
