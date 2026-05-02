@@ -304,6 +304,17 @@ def tune_model(
         raise ValueError(f"metric must be 'rmse' or 'mae', got '{metric}'")
 
     n_trials = n_trials if n_trials is not None else _DEFAULT_N_TRIALS[model_name]
+
+    # M2-3: Lower-bound parameter checks
+    if n_trials < 1:
+        raise ValueError(f"n_trials must be >= 1, got {n_trials}.")
+    if n_folds < 2:
+        raise ValueError(
+            f"n_folds must be >= 2, got {n_folds}. "
+            "At least 2 folds are required for meaningful cross-validation."
+        )
+    if test_days < 1:
+        raise ValueError(f"test_days must be >= 1, got {test_days}.")
     search_space = _SEARCH_SPACES[model_name]
 
     flat_trials = _sample_lhs(search_space, n_trials, seed)

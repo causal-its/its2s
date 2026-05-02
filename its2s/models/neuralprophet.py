@@ -3,6 +3,7 @@
 # Dependencies: neuralprophet, numpy, pandas
 
 import logging
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -56,7 +57,8 @@ class NeuralProphetModel(BaseModel):
             for col in covariate_cols:
                 self._model = self._model.add_lagged_regressor(col)
 
-        metrics_df = self._model.fit(np_df, freq="D")
+        freq = self.params.get("freq", "D")
+        metrics_df = self._model.fit(np_df, freq=freq)
 
         fitted_df = self._model.predict(np_df)
         fitted_vals = fitted_df["yhat1"].values

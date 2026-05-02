@@ -3,6 +3,7 @@
 # Dependencies: pandas, numpy
 
 import logging
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -25,6 +26,14 @@ def validate_inputs(df, intervention_date, date_col, target_col,
     covariate_cols : list[str] or None
     model_name : str
     """
+    # M2-1: Check intervention_date type
+    if not isinstance(intervention_date, (str, pd.Timestamp)):
+        raise ValueError(
+            f"intervention_date must be a str or pd.Timestamp, "
+            f"got {type(intervention_date).__name__!r}. "
+            "Example: '2022-03-15' or pd.Timestamp('2022-03-15')."
+        )
+
     # Check required columns exist
     if date_col not in df.columns:
         raise ValueError(
@@ -46,6 +55,16 @@ def validate_inputs(df, intervention_date, date_col, target_col,
                 f"Available columns: {list(df.columns)}"
             )
 
+        # M2-5: Check covariate columns for NaN values
+        for col in covariate_cols:
+            n_na = df[col].isna().sum()
+            if n_na > 0:
+                raise ValueError(
+                    f"Covariate column '{col}' contains {n_na} missing value(s). "
+                    "All covariate columns must be complete before model fitting. "
+                    "Impute or drop missing rows before calling run_single_its()."
+                )
+
     # Check DataFrame is not empty
     if len(df) == 0:
         raise ValueError("Input DataFrame is empty.")
@@ -60,30 +79,35 @@ def validate_inputs(df, intervention_date, date_col, target_col,
 
     # Check intervention date is within the data range
     dates = pd.to_datetime(df[date_col])
-    intervention_date = pd.Timestamp(intervention_date)
-    if intervention_date < dates.min() or intervention_date > dates.max():
-        logger.warning(
-            "Intervention date %s is outside the data range [%s, %s]. "
+    intervention_ts = pd.Timestamp(intervention_date)
+    if intervention_ts < dates.min() or intervention_ts > dates.max():
+        warnings.warn(
+            f"Intervention date {intervention_ts.date()} is outside the data "
+            f"range [{dates.min().date()}, {dates.max().date()}]. "
             "This may result in empty train or holdout splits.",
-            intervention_date, dates.min(), dates.max(),
+            UserWarning,
+            stacklevel=3,
         )
 
     # Check sufficient data for model fitting
-    n_before = (dates < intervention_date).sum()
+    n_before = (dates < intervention_ts).sum()
     if n_before < 10:
-        logger.warning(
-            "Only %d observations before the intervention date. "
+        warnings.warn(
+            f"Only {n_before} observations before the intervention date. "
             "Most models require substantially more training data for "
             "reliable counterfactual estimation.",
-            n_before,
+            UserWarning,
+            stacklevel=3,
         )
 
     # Check for excessive missing data
     n_missing = df[target_col].isna().sum()
     frac_missing = n_missing / len(df)
     if frac_missing > 0.2:
-        logger.warning(
-            "%.1f%% of target column '%s' values are missing (%d / %d rows). "
+        warnings.warn(
+            f"{frac_missing * 100:.1f}% of target column '{target_col}' values "
+            f"are missing ({n_missing} / {len(df)} rows). "
             "This may degrade model performance.",
-            frac_missing * 100, target_col, n_missing, len(df),
+            UserWarning,
+            stacklevel=3,
         )

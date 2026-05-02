@@ -123,7 +123,11 @@ class MovingBlockBootstrap(BaseBootstrap):
                         i + 1, self.n_sim,
                     )
         except Exception:
-            logger.warning("Parallel MBB failed, falling back to sequential.")
+            warnings.warn(
+                "Parallel MBB execution failed; falling back to sequential.",
+                UserWarning,
+                stacklevel=2,
+            )
             for i in range(self.n_sim):
                 try:
                     preds = _single_mbb_sim(

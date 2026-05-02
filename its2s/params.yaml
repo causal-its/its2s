@@ -38,6 +38,7 @@ models:
     learning_rate: 0.01
     epochs: 100
     batch_size: 64
+    freq: "D"   # pandas offset alias; override for non-daily series (e.g. "W", "MS")
 
   prophet_xgb:
     prophet:

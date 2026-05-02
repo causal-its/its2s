@@ -186,34 +186,37 @@ class TestValidation:
         # Should complete without raising.
         validate_inputs(df, intv, "ds", "y", None, "arima")
 
-    def test_intervention_outside_range_does_not_raise(self, caplog):
+    def test_intervention_outside_range_does_not_raise(self):
+        import warnings
         from its2s.validation import validate_inputs
-        import logging
         df, intv, _ = make_short_series(n_pre=30, n_post=10, seed=42)
         far_future = pd.Timestamp("2050-01-01")
-        with caplog.at_level(logging.WARNING):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             validate_inputs(df, far_future, "ds", "y", None, "arima")
-        assert any("outside" in r.message.lower() for r in caplog.records)
+        assert any("outside" in str(w.message).lower() for w in caught)
 
-    def test_few_pre_obs_does_not_raise(self, caplog):
+    def test_few_pre_obs_does_not_raise(self):
+        import warnings
         from its2s.validation import validate_inputs
-        import logging
         df = pd.DataFrame({
             "ds": pd.date_range("2021-01-01", periods=15),
             "y": np.random.default_rng(0).standard_normal(15) + 10,
         })
         intv = df["ds"].iloc[5]
-        with caplog.at_level(logging.WARNING):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             validate_inputs(df, intv, "ds", "y", None, "arima")
-        assert any("observations" in r.message.lower() for r in caplog.records)
+        assert any("observations" in str(w.message).lower() for w in caught)
 
-    def test_high_missing_fraction_does_not_raise(self, caplog):
+    def test_high_missing_fraction_does_not_raise(self):
+        import warnings
         from its2s.validation import validate_inputs
-        import logging
         df, intv, _ = make_missing_data_series(frac_missing=0.25, seed=42)
-        with caplog.at_level(logging.WARNING):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             validate_inputs(df, intv, "ds", "y", None, "arima")
-        assert any("missing" in r.message.lower() for r in caplog.records)
+        assert any("missing" in str(w.message).lower() for w in caught)
 
 
 # ===================================================================

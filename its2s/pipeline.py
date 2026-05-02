@@ -3,6 +3,7 @@
 # Dependencies: all its2s submodules
 
 import logging
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -205,6 +206,18 @@ def run_single_its(
     validate_inputs(df, intervention_date, date_col, target_col,
                     covariate_cols, model_name)
 
+    # M2-6: Check date-sort and warn if DataFrame is unsorted
+    dates_check = pd.to_datetime(df[date_col])
+    if not dates_check.is_monotonic_increasing:
+        warnings.warn(
+            f"DataFrame is not sorted by '{date_col}'. Rows will be reordered "
+            "before model fitting. If covariate columns are present, ensure "
+            "their values are aligned with the date column, not with the "
+            "original row positions. Pre-sort your DataFrame to suppress this warning.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     # 1c. Handle missing data in target column
     missing_strategy = config["data"].get("missing_data", "error")
     n_missing = df[target_col].isna().sum()
@@ -216,15 +229,18 @@ def run_single_its(
                 f"in config to handle them automatically."
             )
         elif missing_strategy == "drop":
-            logger.warning(
-                "Dropping %d rows with missing values in '%s'.",
-                n_missing, target_col,
+            warnings.warn(
+                f"Dropping {n_missing} row(s) with missing values in '{target_col}'.",
+                UserWarning,
+                stacklevel=2,
             )
             df = df.dropna(subset=[target_col]).copy()
         elif missing_strategy == "interpolate":
-            logger.warning(
-                "Interpolating %d missing values in '%s' using linear method.",
-                n_missing, target_col,
+            warnings.warn(
+                f"Interpolating {n_missing} missing value(s) in '{target_col}' "
+                "using linear method.",
+                UserWarning,
+                stacklevel=2,
             )
             df = df.copy()
             df[target_col] = df[target_col].interpolate(method="linear")
@@ -256,12 +272,13 @@ def run_single_its(
     # 3b. Warn about long-horizon ARIMA forecasts (B5)
     holdout_days = config["periods"]["holdout_days"]
     if model_name == "arima" and holdout_days > 90:
-        logger.warning(
-            "ARIMA with holdout_days=%d: ARIMA point forecasts converge to "
-            "the unconditional mean over long horizons, which can bias the "
-            "counterfactual estimate. Consider prophet_xgb or "
+        warnings.warn(
+            f"ARIMA with holdout_days={holdout_days}: ARIMA point forecasts "
+            "converge to the unconditional mean over long horizons, which can "
+            "bias the counterfactual estimate. Consider prophet_xgb or "
             "prophet_then_xgb for holdout windows beyond 90 days.",
-            holdout_days,
+            UserWarning,
+            stacklevel=2,
         )
 
     # 4. Fit model
