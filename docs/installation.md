@@ -5,12 +5,22 @@ The easiest way to install `its2s` is from PyPI.
 
 `pip install its2s`
 
-You can also build `its2s` from source with: 
+> **Prophet / CmdStan**: Prophet compiles a Stan model on first import. Expect ~5–10
+> minutes the first time; subsequent imports are fast.
+
+> **NeuralProphet / PyTorch**: NeuralProphet requires PyTorch (~1 GB) and is an optional
+> dependency. Install it via `pip install its2s[neural]`.
+
+> **setuptools pin**: The package pins `setuptools>=68,<71` because NeuralProphet uses
+> `pkg_resources`, which was removed in setuptools 71+. If you see import errors related
+> to `pkg_resources`, check your setuptools version.
+
+You can also build `its2s` from source with:
 
 ```bash
 git clone https://github.com/causal-its/its2s.git
 cd its2s
-python -m pip install
+python -m pip install -e .
 ```
 
 ### Environment setup
