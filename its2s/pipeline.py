@@ -166,6 +166,7 @@ def run_single_its(
     config_overrides=None,
     output_dir=None,
     seed=42,
+    split_method=None,
 ):
     """Run a single ITS counterfactual analysis pipeline.
 
@@ -202,9 +203,24 @@ def run_single_its(
     target_col = target_col or config["data"]["target_col"]
     covariate_cols = covariate_cols if covariate_cols is not None else config["data"]["covariate_cols"]
 
+    # Resolve split-method config (function kwarg overrides config)
+    periods_cfg = config["periods"]
+    if split_method is not None:
+        periods_cfg["split_method"] = split_method
+    split_method_resolved = periods_cfg.get("split_method", "percent")
+    test_pct_resolved = periods_cfg.get("test_pct", 0.20)
+    holdout_pct_resolved = periods_cfg.get("holdout_pct", 1.0)
+    test_days_resolved = periods_cfg.get("test_days", 365)
+    holdout_days_resolved = periods_cfg.get("holdout_days", 365)
+
     # 1b. Validate inputs
     validate_inputs(df, intervention_date, date_col, target_col,
-                    covariate_cols, model_name)
+                    covariate_cols, model_name,
+                    split_method=split_method_resolved,
+                    test_pct=test_pct_resolved,
+                    holdout_pct=holdout_pct_resolved,
+                    test_days=test_days_resolved,
+                    holdout_days=holdout_days_resolved)
 
     # M2-6: Check date-sort and warn if DataFrame is unsorted
     dates_check = pd.to_datetime(df[date_col])
@@ -256,8 +272,11 @@ def run_single_its(
         df,
         intervention_date,
         date_col=date_col,
-        test_days=config["periods"]["test_days"],
-        holdout_days=config["periods"]["holdout_days"],
+        split_method=split_method_resolved,
+        test_pct=test_pct_resolved,
+        holdout_pct=holdout_pct_resolved,
+        test_days=test_days_resolved,
+        holdout_days=holdout_days_resolved,
     )
 
     logger.info(
@@ -270,7 +289,7 @@ def run_single_its(
     model = _get_model(model_name, model_params)
 
     # 3b. Warn about long-horizon ARIMA forecasts (B5)
-    holdout_days = config["periods"]["holdout_days"]
+    holdout_days = len(splits.holdout_df)
     if model_name == "arima" and holdout_days > 90:
         warnings.warn(
             f"ARIMA with holdout_days={holdout_days}: ARIMA point forecasts "

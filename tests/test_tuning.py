@@ -289,6 +289,25 @@ class TestTuneModel:
         assert result.metric == "rmse"
         assert result.seed == 77
 
+    def test_tune_model_percent_cv_short_series(self):
+        """Percent-based CV must handle a short pre-intervention series."""
+        rng = np.random.default_rng(0)
+        n_pre, n_post = 200, 30
+        n = n_pre + n_post
+        dates = pd.date_range("2020-01-01", periods=n, freq="D")
+        y = 100 + np.sin(np.arange(n) * 2 * np.pi / 30) * 5 + rng.normal(0, 1, n)
+        df = pd.DataFrame({"ds": dates, "y": y})
+        intv = dates[n_pre]
+        result = tune_model(
+            df, intervention_date=intv, model_name="arima",
+            n_trials=4, n_folds=3,
+            split_method="percent",
+            test_pct=0.10, min_train_pct=0.50,
+            seed=11,
+        )
+        assert result.n_trials == 4
+        assert math.isfinite(result.best_rmse)
+
 
 # ---------------------------------------------------------------------------
 # Tuning section in params.yaml

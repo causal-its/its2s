@@ -69,6 +69,9 @@ def get_model_config(config, model_name):
 def get_tuning_config(config):
     """Extract the tuning defaults section.
 
+    Fills in sensible defaults for percent-based and day-based CV controls so
+    callers (e.g. tune_model) can read either path uniformly.
+
     Parameters
     ----------
     config : dict
@@ -77,4 +80,18 @@ def get_tuning_config(config):
     -------
     dict
     """
-    return copy.deepcopy(config.get("tuning", {}))
+    tuning = copy.deepcopy(config.get("tuning", {}))
+    tuning.setdefault("split_method", "percent")
+    tuning.setdefault("n_folds", 5)
+    tuning.setdefault("metric", "rmse")
+    tuning.setdefault("n_jobs", 1)
+    tuning.setdefault("seed", 42)
+    if tuning["split_method"] == "percent":
+        tuning.setdefault("test_pct", 0.10)
+        tuning.setdefault("min_train_pct", 0.50)
+        tuning.setdefault("skip_pct", 0.0)
+    else:
+        tuning.setdefault("test_days", 365)
+        tuning.setdefault("min_train_days", 730)
+        tuning.setdefault("skip_days", 0)
+    return tuning

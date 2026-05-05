@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 def validate_inputs(df, intervention_date, date_col, target_col,
-                    covariate_cols, model_name):
+                    covariate_cols, model_name,
+                    split_method=None, test_pct=None, holdout_pct=None,
+                    test_days=None, holdout_days=None):
     """Validate inputs before running the ITS pipeline.
 
     Raises ValueError with a clear message if any check fails.
@@ -99,6 +101,24 @@ def validate_inputs(df, intervention_date, date_col, target_col,
             UserWarning,
             stacklevel=3,
         )
+
+    # Split-method checks (issue 2.3): catch empty splits / out-of-range pcts
+    if split_method == "percent":
+        if test_pct is not None and not (0 < test_pct < 1):
+            raise ValueError(
+                f"periods.test_pct must be in (0, 1), got {test_pct}."
+            )
+        if holdout_pct is not None and not (0 < holdout_pct <= 1):
+            raise ValueError(
+                f"periods.holdout_pct must be in (0, 1], got {holdout_pct}."
+            )
+    elif split_method == "days":
+        if test_days is not None and test_days >= n_before:
+            raise ValueError(
+                f"periods.test_days ({test_days}) >= number of pre-intervention "
+                f"observations ({n_before}). The training split would be empty. "
+                "Reduce test_days or switch to split_method='percent'."
+            )
 
     # Check for excessive missing data
     n_missing = df[target_col].isna().sum()

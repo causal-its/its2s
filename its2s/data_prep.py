@@ -18,7 +18,20 @@ class TimeSeriesSplits:
     intervention_date: pd.Timestamp
 
 
-def prepare_splits(df, intervention_date, date_col="ds", test_days=365, holdout_days=365):
+def _compute_split_days_from_pct(df, intervention_date, date_col,
+                                  test_pct, holdout_pct):
+    """Convert row-count percentages to (test_days, holdout_days)."""
+    n_pre = (df[date_col] < intervention_date).sum()
+    n_post = (df[date_col] >= intervention_date).sum()
+    test_days = max(1, int(round(test_pct * n_pre)))
+    holdout_days = max(1, int(round(holdout_pct * n_post)))
+    return test_days, holdout_days
+
+
+def prepare_splits(df, intervention_date, date_col="ds",
+                   split_method="percent",
+                   test_pct=0.20, holdout_pct=1.0,
+                   test_days=365, holdout_days=365):
     """Split a time series DataFrame into train, test, and holdout periods.
 
     Parameters
@@ -29,10 +42,22 @@ def prepare_splits(df, intervention_date, date_col="ds", test_days=365, holdout_
         Date of the intervention.
     date_col : str
         Name of the date column.
+    split_method : {"percent", "days"}
+        "percent" (default): derive test/holdout window lengths from row-count
+        percentages of the pre-/post-intervention slices.
+        "days": use explicit `test_days` and `holdout_days`.
+    test_pct : float
+        Fraction of the pre-intervention slice used as the test window. Used
+        only when ``split_method="percent"``.
+    holdout_pct : float
+        Fraction of the post-intervention slice used as the holdout window.
+        Used only when ``split_method="percent"``.
     test_days : int
-        Number of days before intervention used as the test (pre-intervention validation) window.
+        Number of days before intervention used as the test window. Used only
+        when ``split_method="days"``.
     holdout_days : int
-        Number of days after intervention used as the holdout (post-intervention) window.
+        Number of days after intervention used as the holdout window. Used
+        only when ``split_method="days"``.
 
     Returns
     -------
@@ -43,6 +68,16 @@ def prepare_splits(df, intervention_date, date_col="ds", test_days=365, holdout_
     df = df.sort_values(date_col).reset_index(drop=True)
 
     intervention_date = pd.Timestamp(intervention_date)
+
+    if split_method == "percent":
+        test_days, holdout_days = _compute_split_days_from_pct(
+            df, intervention_date, date_col, test_pct, holdout_pct,
+        )
+    elif split_method != "days":
+        raise ValueError(
+            f"split_method must be 'percent' or 'days', got {split_method!r}."
+        )
+
     test_start = intervention_date - pd.Timedelta(days=test_days)
     holdout_end = intervention_date + pd.Timedelta(days=holdout_days)
 

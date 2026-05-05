@@ -18,8 +18,11 @@ data:
   missing_data: "error"   # "error", "drop", or "interpolate"
 
 periods:
-  test_days: 365
-  holdout_days: 365
+  split_method: percent       # "percent" (default) | "days"
+  test_pct: 0.20              # used when split_method=percent
+  holdout_pct: 1.0             # used when split_method=percent
+  test_days: 365              # used when split_method=days
+  holdout_days: 365           # used when split_method=days
 
 models:
   prophet_xgb:
@@ -99,9 +102,14 @@ excess_periods: []
 #   end_offset: null
 
 tuning:
+  split_method: percent
   n_folds: 5
-  test_days: 365
+  test_pct: 0.10              # CV fold test window = 10% of pre-intervention
+  min_train_pct: 0.50         # initial training = 50% of pre-intervention
+  skip_pct: 0.0               # gap between folds (0% = back-to-back)
+  test_days: 365              # used when split_method=days
   min_train_days: 730
+  skip_days: 0
   metric: "rmse"
   n_jobs: 1
   seed: 42

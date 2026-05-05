@@ -219,6 +219,10 @@ def tune_model(
     min_train_days: int = 730,
     skip_days: int = 0,
     cv_end_date=None,
+    split_method: str = "percent",
+    test_pct: float = 0.10,
+    min_train_pct: float = 0.50,
+    skip_pct: float = 0.0,
     metric: str = "rmse",
     config_path=None,
     n_jobs: int = 1,
@@ -313,7 +317,7 @@ def tune_model(
             f"n_folds must be >= 2, got {n_folds}. "
             "At least 2 folds are required for meaningful cross-validation."
         )
-    if test_days < 1:
+    if split_method == "days" and test_days < 1:
         raise ValueError(f"test_days must be >= 1, got {test_days}.")
     search_space = _SEARCH_SPACES[model_name]
 
@@ -326,6 +330,10 @@ def tune_model(
         "min_train_days": min_train_days,
         "skip_days":      skip_days,
         "cv_end_date":    cv_end_date,
+        "split_method":   split_method,
+        "test_pct":       test_pct,
+        "min_train_pct":  min_train_pct,
+        "skip_pct":       skip_pct,
         "config_path":    config_path,
     }
 

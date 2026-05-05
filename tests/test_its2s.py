@@ -946,6 +946,29 @@ class TestCrossValidation:
         assert len(r1.folds) == len(r2.folds)
         assert abs(r1.mean_rmse - r2.mean_rmse) < 1e-9
 
+    # --- percent-based CV ---
+
+    def test_cv_percent_basic(self):
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=200, n_post=50, seed=620)
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=3, split_method="percent",
+                                test_pct=0.10, min_train_pct=0.50,
+                                config_overrides=self._CV_CFG)
+        assert len(result.folds) >= 1
+        for fold in result.folds:
+            assert fold.n_train > 0
+            assert fold.n_test > 0
+
+    def test_cv_percent_overflow_raises(self):
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=200, n_post=50, seed=621)
+        with pytest.raises(ValueError, match="budget"):
+            time_series_cv(df, intv, model_name="arima",
+                           n_folds=6, split_method="percent",
+                           test_pct=0.20, min_train_pct=0.50,
+                           config_overrides=self._CV_CFG)
+
 
 # ===================================================================
 # Model Comparison
