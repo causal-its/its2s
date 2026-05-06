@@ -56,6 +56,8 @@ class CVResult:
 def time_series_cv(df, intervention_date, model_name="arima",
                    n_folds=5, test_days=90, min_train_days=365,
                    skip_days=0, cv_end_date=None,
+                   split_method="days",
+                   test_pct=0.10, min_train_pct=0.50, skip_pct=0.0,
                    date_col=None, target_col=None, covariate_cols=None,
                    config_path=None, config_overrides=None):
     """Evaluate a model using expanding-window time-series cross-validation.
@@ -137,6 +139,28 @@ def time_series_cv(df, intervention_date, model_name="arima",
         cv_df = df[df[date_col] < intervention_date].copy()
 
     n_cv = len(cv_df)
+
+    if split_method == "percent":
+        budget = min_train_pct + n_folds * test_pct
+        if budget > 1.0:
+            raise ValueError(
+                f"CV percent budget exceeded: min_train_pct ({min_train_pct}) + "
+                f"n_folds ({n_folds}) * test_pct ({test_pct}) = {budget:.3f} > 1.0. "
+                "Reduce n_folds, test_pct, or min_train_pct."
+            )
+        if not (0 < test_pct < 1):
+            raise ValueError(f"test_pct must be in (0, 1), got {test_pct}.")
+        if not (0 < min_train_pct < 1):
+            raise ValueError(f"min_train_pct must be in (0, 1), got {min_train_pct}.")
+        if skip_pct < 0 or skip_pct >= 1:
+            raise ValueError(f"skip_pct must be in [0, 1), got {skip_pct}.")
+        test_days = max(1, int(round(test_pct * n_cv)))
+        min_train_days = max(1, int(round(min_train_pct * n_cv)))
+        skip_days = max(0, int(round(skip_pct * n_cv)))
+    elif split_method != "days":
+        raise ValueError(
+            f"split_method must be 'percent' or 'days', got {split_method!r}."
+        )
 
     if n_cv < min_train_days + test_days:
         raise ValueError(

@@ -186,34 +186,37 @@ class TestValidation:
         # Should complete without raising.
         validate_inputs(df, intv, "ds", "y", None, "arima")
 
-    def test_intervention_outside_range_does_not_raise(self, caplog):
+    def test_intervention_outside_range_does_not_raise(self):
+        import warnings
         from its2s.validation import validate_inputs
-        import logging
         df, intv, _ = make_short_series(n_pre=30, n_post=10, seed=42)
         far_future = pd.Timestamp("2050-01-01")
-        with caplog.at_level(logging.WARNING):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             validate_inputs(df, far_future, "ds", "y", None, "arima")
-        assert any("outside" in r.message.lower() for r in caplog.records)
+        assert any("outside" in str(w.message).lower() for w in caught)
 
-    def test_few_pre_obs_does_not_raise(self, caplog):
+    def test_few_pre_obs_does_not_raise(self):
+        import warnings
         from its2s.validation import validate_inputs
-        import logging
         df = pd.DataFrame({
             "ds": pd.date_range("2021-01-01", periods=15),
             "y": np.random.default_rng(0).standard_normal(15) + 10,
         })
         intv = df["ds"].iloc[5]
-        with caplog.at_level(logging.WARNING):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             validate_inputs(df, intv, "ds", "y", None, "arima")
-        assert any("observations" in r.message.lower() for r in caplog.records)
+        assert any("observations" in str(w.message).lower() for w in caught)
 
-    def test_high_missing_fraction_does_not_raise(self, caplog):
+    def test_high_missing_fraction_does_not_raise(self):
+        import warnings
         from its2s.validation import validate_inputs
-        import logging
         df, intv, _ = make_missing_data_series(frac_missing=0.25, seed=42)
-        with caplog.at_level(logging.WARNING):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             validate_inputs(df, intv, "ds", "y", None, "arima")
-        assert any("missing" in r.message.lower() for r in caplog.records)
+        assert any("missing" in str(w.message).lower() for w in caught)
 
 
 # ===================================================================
@@ -942,6 +945,29 @@ class TestCrossValidation:
                             cv_end_date=intv, config_overrides=self._CV_CFG)
         assert len(r1.folds) == len(r2.folds)
         assert abs(r1.mean_rmse - r2.mean_rmse) < 1e-9
+
+    # --- percent-based CV ---
+
+    def test_cv_percent_basic(self):
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=200, n_post=50, seed=620)
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=3, split_method="percent",
+                                test_pct=0.10, min_train_pct=0.50,
+                                config_overrides=self._CV_CFG)
+        assert len(result.folds) >= 1
+        for fold in result.folds:
+            assert fold.n_train > 0
+            assert fold.n_test > 0
+
+    def test_cv_percent_overflow_raises(self):
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=200, n_post=50, seed=621)
+        with pytest.raises(ValueError, match="budget"):
+            time_series_cv(df, intv, model_name="arima",
+                           n_folds=6, split_method="percent",
+                           test_pct=0.20, min_train_pct=0.50,
+                           config_overrides=self._CV_CFG)
 
 
 # ===================================================================

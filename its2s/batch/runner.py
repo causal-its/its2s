@@ -68,6 +68,16 @@ def run_batch(series_list, config_path=None, output_dir="output",
     -------
     list[PipelineResult]
     """
+    # M2-2: Validate series_list structure
+    _REQUIRED_KEYS = {"series_id", "df", "intervention_date"}
+    for i, spec in enumerate(series_list):
+        missing_keys = _REQUIRED_KEYS - set(spec.keys())
+        if missing_keys:
+            raise ValueError(
+                f"series_list[{i}] is missing required keys: {sorted(missing_keys)}. "
+                f"Each entry must have 'series_id', 'df', and 'intervention_date'."
+            )
+
     from ..settings import load_config
     config = load_config(config_path)
     n_sim = config["bootstrap"]["n_sim"]

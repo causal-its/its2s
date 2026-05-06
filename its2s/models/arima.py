@@ -2,6 +2,8 @@
 # Usage: from its2s.models.arima import ARIMAModel
 # Dependencies: pmdarima, numpy, pandas
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pmdarima as pm
@@ -29,6 +31,19 @@ class ARIMAModel(BaseModel):
         y = train_df[target_col].values.astype(float)
         exog = train_df[covariate_cols].values if covariate_cols else None
         self._covariate_cols = covariate_cols
+
+        # M2-8: Warn when m=7 (default) so users on non-daily series can override
+        m_val = p.get("m", 7)
+        if m_val == 7 and self._fixed_order is None:
+            warnings.warn(
+                "ARIMAModel is using m=7 (weekly seasonality period), which "
+                "assumes daily data with weekly cycles. If your series is "
+                "weekly, monthly, or has a different periodicity, set "
+                "m to the appropriate value via config_overrides: "
+                '{"models": {"arima": {"m": <period>}}}.',
+                UserWarning,
+                stacklevel=3,
+            )
 
         if self._fixed_order is not None:
             # Refit with known order (fast path for MBB)

@@ -95,7 +95,5 @@ def plot_counterfactual(pipeline_result, splits, save_path=None, config=None):
     if save_path:
         fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
-    else:
-        plt.close(fig)
 
     return fig

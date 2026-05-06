@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 # Default trial counts per model, matching the R reference implementation:
 # ARIMA=100, NNETAR (-> NeuralProphet)=75, prophet_xgb=100
 _DEFAULT_N_TRIALS = {
-    "arima":            100,
-    "neuralprophet":    75,
     "prophet_xgb":      100,
     "prophet_then_xgb": 100,
+    "neuralprophet":    75,
+    "arima":            100,
 }
 
 # Search spaces: param_name -> (low, high, dtype, scale)
@@ -74,10 +74,10 @@ _PROPHET_XGB_SPACE = {
 }
 
 _SEARCH_SPACES = {
-    "arima":            _ARIMA_SPACE,
-    "neuralprophet":    _NEURALPROPHET_SPACE,
     "prophet_xgb":      _PROPHET_XGB_SPACE,
     "prophet_then_xgb": _PROPHET_XGB_SPACE,
+    "neuralprophet":    _NEURALPROPHET_SPACE,
+    "arima":            _ARIMA_SPACE,
 }
 
 
@@ -219,6 +219,10 @@ def tune_model(
     min_train_days: int = 730,
     skip_days: int = 0,
     cv_end_date=None,
+    split_method: str = "percent",
+    test_pct: float = 0.10,
+    min_train_pct: float = 0.50,
+    skip_pct: float = 0.0,
     metric: str = "rmse",
     config_path=None,
     n_jobs: int = 1,
@@ -304,6 +308,17 @@ def tune_model(
         raise ValueError(f"metric must be 'rmse' or 'mae', got '{metric}'")
 
     n_trials = n_trials if n_trials is not None else _DEFAULT_N_TRIALS[model_name]
+
+    # M2-3: Lower-bound parameter checks
+    if n_trials < 1:
+        raise ValueError(f"n_trials must be >= 1, got {n_trials}.")
+    if n_folds < 2:
+        raise ValueError(
+            f"n_folds must be >= 2, got {n_folds}. "
+            "At least 2 folds are required for meaningful cross-validation."
+        )
+    if split_method == "days" and test_days < 1:
+        raise ValueError(f"test_days must be >= 1, got {test_days}.")
     search_space = _SEARCH_SPACES[model_name]
 
     flat_trials = _sample_lhs(search_space, n_trials, seed)
@@ -315,6 +330,10 @@ def tune_model(
         "min_train_days": min_train_days,
         "skip_days":      skip_days,
         "cv_end_date":    cv_end_date,
+        "split_method":   split_method,
+        "test_pct":       test_pct,
+        "min_train_pct":  min_train_pct,
+        "skip_pct":       skip_pct,
         "config_path":    config_path,
     }
 

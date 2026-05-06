@@ -3,6 +3,7 @@
 # Dependencies: all its2s submodules
 
 import logging
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,10 +23,10 @@ logger = logging.getLogger(__name__)
 
 # Lazy model import map: model name -> (module path, class name)
 _MODEL_IMPORT_MAP = {
-    "arima": (".models.arima", "ARIMAModel"),
-    "neuralprophet": (".models.neuralprophet", "NeuralProphetModel"),
     "prophet_xgb": (".models.prophet_xgb", "ProphetXGBHybridModel"),
     "prophet_then_xgb": (".models.prophet_then_xgb", "ProphetThenXGBModel"),
+    "neuralprophet": (".models.neuralprophet", "NeuralProphetModel"),
+    "arima": (".models.arima", "ARIMAModel"),
 }
 
 _MODEL_CACHE = {}
@@ -77,7 +78,32 @@ def _get_model(model_name, params):
 
 @dataclass
 class PipelineResult:
-    """Output of a single ITS pipeline run."""
+    """Output of a single ITS pipeline run.
+
+    Attributes
+    ----------
+    model_name : str
+        Name of the model used (e.g. "prophet_xgb", "arima").
+    fit_result : FitResult
+        Raw fit output from the model, including fitted_values and residuals
+        on the training period.
+    bootstrap_result : BootstrapCIResult
+        MBB output for the prediction period (test + holdout). Exposes
+        dates, actual, predicted, conf_lo, conf_hi, pred_matrix, and
+        n_successful.
+    metrics_train : MetricsResult
+        RMSE, MAE, MAPE, and R2 computed on the training period.
+    metrics_test : MetricsResult
+        RMSE, MAE, MAPE, and R2 computed on the test period.
+    excess_table : ExcessResult
+        Day-level excess estimates with CIs for the holdout period. Pass to
+        calc_ate_summary() to get total and mean-daily ATE with CIs.
+    config : dict
+        Full resolved config dict used for this run.
+    diagnostics : DiagnosticsResult or None
+        Residual diagnostics (Ljung-Box, Shapiro-Wilk, ACF lags). None if
+        diagnostics could not be computed.
+    """
 
     model_name: str
     fit_result: object
@@ -135,11 +161,12 @@ def run_single_its(
     target_col=None,
     date_col=None,
     covariate_cols=None,
-    model_name="arima",
+    model_name="prophet_xgb",
     config_path=None,
     config_overrides=None,
     output_dir=None,
     seed=42,
+    split_method=None,
 ):
     """Run a single ITS counterfactual analysis pipeline.
 
@@ -156,7 +183,7 @@ def run_single_its(
     covariate_cols : list[str], optional
         Covariate column names. Defaults to config value.
     model_name : str
-        Model to use. One of: arima, neuralprophet, prophet_xgb, prophet_then_xgb.
+        Model to use. One of: prophet_xgb, prophet_then_xgb, neuralprophet, arima.
     config_path : str or Path, optional
         Path to custom YAML config.
     config_overrides : dict, optional
@@ -176,9 +203,36 @@ def run_single_its(
     target_col = target_col or config["data"]["target_col"]
     covariate_cols = covariate_cols if covariate_cols is not None else config["data"]["covariate_cols"]
 
+    # Resolve split-method config (function kwarg overrides config)
+    periods_cfg = config["periods"]
+    if split_method is not None:
+        periods_cfg["split_method"] = split_method
+    split_method_resolved = periods_cfg.get("split_method", "percent")
+    test_pct_resolved = periods_cfg.get("test_pct", 0.20)
+    holdout_pct_resolved = periods_cfg.get("holdout_pct", 1.0)
+    test_days_resolved = periods_cfg.get("test_days", 365)
+    holdout_days_resolved = periods_cfg.get("holdout_days", 365)
+
     # 1b. Validate inputs
     validate_inputs(df, intervention_date, date_col, target_col,
-                    covariate_cols, model_name)
+                    covariate_cols, model_name,
+                    split_method=split_method_resolved,
+                    test_pct=test_pct_resolved,
+                    holdout_pct=holdout_pct_resolved,
+                    test_days=test_days_resolved,
+                    holdout_days=holdout_days_resolved)
+
+    # M2-6: Check date-sort and warn if DataFrame is unsorted
+    dates_check = pd.to_datetime(df[date_col])
+    if not dates_check.is_monotonic_increasing:
+        warnings.warn(
+            f"DataFrame is not sorted by '{date_col}'. Rows will be reordered "
+            "before model fitting. If covariate columns are present, ensure "
+            "their values are aligned with the date column, not with the "
+            "original row positions. Pre-sort your DataFrame to suppress this warning.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     # 1c. Handle missing data in target column
     missing_strategy = config["data"].get("missing_data", "error")
@@ -191,15 +245,18 @@ def run_single_its(
                 f"in config to handle them automatically."
             )
         elif missing_strategy == "drop":
-            logger.warning(
-                "Dropping %d rows with missing values in '%s'.",
-                n_missing, target_col,
+            warnings.warn(
+                f"Dropping {n_missing} row(s) with missing values in '{target_col}'.",
+                UserWarning,
+                stacklevel=2,
             )
             df = df.dropna(subset=[target_col]).copy()
         elif missing_strategy == "interpolate":
-            logger.warning(
-                "Interpolating %d missing values in '%s' using linear method.",
-                n_missing, target_col,
+            warnings.warn(
+                f"Interpolating {n_missing} missing value(s) in '{target_col}' "
+                "using linear method.",
+                UserWarning,
+                stacklevel=2,
             )
             df = df.copy()
             df[target_col] = df[target_col].interpolate(method="linear")
@@ -215,8 +272,11 @@ def run_single_its(
         df,
         intervention_date,
         date_col=date_col,
-        test_days=config["periods"]["test_days"],
-        holdout_days=config["periods"]["holdout_days"],
+        split_method=split_method_resolved,
+        test_pct=test_pct_resolved,
+        holdout_pct=holdout_pct_resolved,
+        test_days=test_days_resolved,
+        holdout_days=holdout_days_resolved,
     )
 
     logger.info(
@@ -229,14 +289,15 @@ def run_single_its(
     model = _get_model(model_name, model_params)
 
     # 3b. Warn about long-horizon ARIMA forecasts (B5)
-    holdout_days = config["periods"]["holdout_days"]
+    holdout_days = len(splits.holdout_df)
     if model_name == "arima" and holdout_days > 90:
-        logger.warning(
-            "ARIMA with holdout_days=%d: ARIMA point forecasts converge to "
-            "the unconditional mean over long horizons, which can bias the "
-            "counterfactual estimate. Consider prophet_xgb or "
+        warnings.warn(
+            f"ARIMA with holdout_days={holdout_days}: ARIMA point forecasts "
+            "converge to the unconditional mean over long horizons, which can "
+            "bias the counterfactual estimate. Consider prophet_xgb or "
             "prophet_then_xgb for holdout windows beyond 90 days.",
-            holdout_days,
+            UserWarning,
+            stacklevel=2,
         )
 
     # 4. Fit model

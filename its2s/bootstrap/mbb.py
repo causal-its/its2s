@@ -123,7 +123,11 @@ class MovingBlockBootstrap(BaseBootstrap):
                         i + 1, self.n_sim,
                     )
         except Exception:
-            logger.warning("Parallel MBB failed, falling back to sequential.")
+            warnings.warn(
+                "Parallel MBB execution failed; falling back to sequential.",
+                UserWarning,
+                stacklevel=2,
+            )
             for i in range(self.n_sim):
                 try:
                     preds = _single_mbb_sim(
@@ -146,10 +150,11 @@ class MovingBlockBootstrap(BaseBootstrap):
         logger.info("MBB: %d / %d simulations successful.", n_successful, self.n_sim)
 
         if n_successful < self.n_sim // 2:
-            logger.warning(
-                "Only %d / %d bootstrap simulations succeeded. "
+            warnings.warn(
+                f"Only {n_successful} / {self.n_sim} bootstrap simulations succeeded. "
                 "CIs may be unreliable.",
-                n_successful, self.n_sim,
+                UserWarning,
+                stacklevel=2,
             )
 
         conf_lo, conf_hi = self.calculate_ci(

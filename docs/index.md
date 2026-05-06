@@ -20,7 +20,7 @@ For comprehensive methodological details, see [insert paper link here when appli
 
 | Function | Overview | Inputs | Outputs |
 |----------|----------|--------|---------|
-| `run_single_its` | End-to-end ITS pipeline for a single series: split, fit, bootstrap, score, save outputs. | `df`, `intervention_date`, `model_name` (`arima` / `prophet_xgb` / `prophet_then_xgb` / `neuralprophet`), optional `config_path` / `config_overrides`, optional `output_dir` | `PipelineResult` (+ files when `output_dir` is set) |
+| `run_single_its` | End-to-end ITS pipeline for a single series: split, fit, bootstrap, score, save outputs. | `df`, `intervention_date`, `model_name` (`prophet_xgb` / `prophet_then_xgb` / `neuralprophet` / `arima`), optional `config_path` / `config_overrides`, optional `output_dir` | `PipelineResult` (+ files when `output_dir` is set) |
 | `run_batch` | Run the pipeline over many series, optionally in parallel. | `series_list` (list of dicts with `series_id`, `df`, `intervention_date`, …), optional `config_path`, `output_dir`, `n_jobs`, `seed` | list of `PipelineResult` |
 
 ```python

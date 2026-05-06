@@ -2,7 +2,7 @@
 
 ## Minimal example using simulated data
 
-The pipeline expects a sorted time index and outcome column (defaults: `ds`, `y`). Defaults in `its2s/params.yaml` use a one-year pre-intervention test window and one-year post-intervention holdout, with 1000 bootstrap draws—fine for real analyses but slow for a smoke test. The example below builds a fake daily series and passes **`config_overrides`** so it finishes in a reasonable time.
+The pipeline expects a sorted time index and outcome column (defaults: `ds`, `y`). Defaults in `its2s/params.yaml` size the pre-intervention test window as 20% of the pre-event data and use the full post-event period as the holdout, with 1000 bootstrap draws—fine for real analyses but slow for a smoke test. The example below builds a fake daily series and passes **`config_overrides`** to pin the windows to fixed day counts and shrink the bootstrap so it finishes in a reasonable time.
 
 ```python
 import numpy as np
@@ -12,9 +12,10 @@ from its2s import run_single_its
 rng = np.random.default_rng(42)
 intervention_date = "2022-06-01"
 
-# using shorter windows + fewer bootstrap draws than package defaults for a faster demo
+# using shorter windows + fewer bootstrap draws than package defaults for a faster demo.
+# split_method="days" opts out of the percent default so test_days/holdout_days are honored.
 config_overrides = {
-    "periods": {"test_days": 90, "holdout_days": 90},
+    "periods": {"split_method": "days", "test_days": 90, "holdout_days": 90},
     "bootstrap": {"n_sim": 100},
 }
 
@@ -36,7 +37,7 @@ df = pd.DataFrame({"ds": dates, "y": y})
 result = run_single_its(
     df,
     intervention_date=intervention_date,
-    model_name="arima",
+    model_name="prophet_xgb",
     config_overrides=config_overrides,
     seed=42,
 )
@@ -50,7 +51,7 @@ from pathlib import Path
 result = run_single_its(
     df,
     intervention_date=intervention_date,
-    model_name="arima",
+    model_name="prophet_xgb",
     config_overrides=config_overrides,
     output_dir=Path("./its2s_outputs"),
     seed=42,
@@ -85,7 +86,7 @@ The date column is parsed as datetime and the series is sorted by time inside th
 
 Pass `output_dir` as a string or `pathlib.Path`; the directory is created if needed (`parents=True`).
 
-**Files written** (names include `model_name`, e.g. `arima`):
+**Files written** (names include `model_name`, e.g. `prophet_xgb`):
 
 | File | Description |
 |------|-------------|
@@ -132,7 +133,7 @@ Covariates are **extra numeric (or otherwise model-supported) columns** in the s
 **Requirements**
 
 - Every name in `covariate_cols` must exist as a column in `df`.
-- Values should be defined for all rows in the **test + holdout** window (from `periods.test_days` before the intervention through `periods.holdout_days` after), so prediction and bootstrap over that horizon have the covariate path. Missing handling is model-specific; avoid unexpected NaNs in those windows unless your chosen model tolerates them.
+- Values should be defined for all rows in the **test + holdout** window (whose lengths are derived from `periods.test_pct` / `periods.holdout_pct` by default, or from `periods.test_days` / `periods.holdout_days` when `split_method="days"`), so prediction and bootstrap over that horizon have the covariate path. Missing handling is model-specific; avoid unexpected NaNs in those windows unless your chosen model tolerates them.
 
 To tune horizons or bootstrap settings, merge a YAML file via `config_path` or pass a nested dict as `config_overrides` (see the [API Reference](api.md) for more details). The built-in default YAML is `its2s/params.yaml` inside the installed package.
 
@@ -140,4 +141,4 @@ To tune horizons or bootstrap settings, merge a YAML file via `config_path` or p
 
 - **`config_path`**: optional YAML merged on top of package defaults (`its2s/params.yaml`).
 - **`config_overrides`**: optional dict merged last (highest priority).
-- **`model_name`**: one of `arima`, `prophet_xgb`, `prophet_then_xgb`, `neuralprophet` (subject to optional dependencies).
+- **`model_name`**: one of `prophet_xgb`, `prophet_then_xgb`, `neuralprophet`, `arima` (subject to optional dependencies).
