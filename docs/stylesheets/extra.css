@@ -8,6 +8,11 @@
  *   #712B13  rust red (used minimally for hover / active)
  */
 
+/* IBM Plex Sans — used by the home-page dictionary entry to set it apart from
+   Material's default Roboto body text. Plex carries a slightly editorial /
+   academic feel that suits the reference-entry styling. Loaded from Google Fonts. */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+
 :root {
   --its2s-blue-darkest: #4a6b8a;
   --its2s-blue-mid-dark: #6b8ba6;
@@ -95,4 +100,67 @@
 }
 [data-md-color-scheme="slate"] .md-typeset h1.its2s-hero-title {
   color: var(--its2s-blue-lightest);
+}
+
+/* Dictionary-entry styled definition that sits under the hero on the home page.
+   Rust left-border + EB Garamond serif type evokes a printed dictionary entry,
+   visually separating it from Material's default Roboto body text. The bolded
+   letters in the first definition spell out the i-t-s-2-s acronym. */
+.md-typeset .its2s-glossary {
+  border-left: 3px solid var(--its2s-rust);
+  padding: 0.75rem 0 0.75rem 1.25rem;
+  margin: 0 0 2rem;
+  font-family: "IBM Plex Sans", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  font-size: 1em;
+  line-height: 1.55;
+}
+.md-typeset .its2s-glossary dt {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.md-typeset .its2s-glossary .word {
+  font-weight: 700;
+  font-size: 1.6em;
+  color: var(--its2s-blue-darkest);
+}
+[data-md-color-scheme="slate"] .md-typeset .its2s-glossary .word {
+  color: var(--its2s-blue-lightest);
+}
+.md-typeset .its2s-glossary .ipa {
+  opacity: 0.65;
+  font-style: italic;
+}
+.md-typeset .its2s-glossary .pos {
+  font-style: italic;
+  color: var(--its2s-rust);
+  font-size: 0.95em;
+}
+[data-md-color-scheme="slate"] .md-typeset .its2s-glossary .pos {
+  color: var(--its2s-blue-mid-light);
+}
+.md-typeset .its2s-glossary dd {
+  margin: 0.5rem 0 0;
+  padding-left: 0;
+}
+.md-typeset .its2s-glossary ol {
+  margin: 0.4rem 0 0;
+  padding-left: 1.5rem;
+}
+.md-typeset .its2s-glossary ol > li {
+  margin-bottom: 0.35rem;
+}
+/* Bold + underlined acronym letters (i, t, s, 2, s) inside the glossary entry.
+   The thicker rust underline echoes the left border and makes the spelling-out
+   of "its2s" pop without being shouty. */
+.md-typeset .its2s-glossary strong {
+  text-decoration: underline;
+  text-decoration-color: var(--its2s-rust);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+[data-md-color-scheme="slate"] .md-typeset .its2s-glossary strong {
+  text-decoration-color: var(--its2s-blue-mid-light);
 }
