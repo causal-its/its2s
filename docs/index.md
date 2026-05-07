@@ -3,11 +3,23 @@
   <h1 class="its2s-hero-title">its2s</h1>
 </div>
 
-`its2s` is an open-source Python package providing a modular framework for a two-stage interrupted time series (ITS) analysis pipeline using machine learning models. It includes tools for data splitting, cross-validation, hyperparameter tuning, different model types, moving-block bootstrap confidence intervals, and a full end-to-end workflow.
+<dl class="its2s-glossary">
+  <dt>
+    <span class="word">its2s</span>
+    <span class="ipa">/ˈɪts.tuː.ɛs/</span>
+    <span class="pos">noun</span>
+  </dt>
+  <dd>
+    <ol>
+      <li>An open-source Python package for <strong>i</strong>nterrupted <strong>t</strong>ime <strong>s</strong>eries, <strong>2</strong>-<strong>s</strong>tage counterfactual analysis with moving-block bootstrap confidence intervals.</li>
+      <li>A modular framework for fitting ITS models with cross-validation, hyperparameter tuning, and reproducible end-to-end workflows.</li>
+    </ol>
+  </dd>
+</dl>
 
-Use this package in your own Python environment: load a tabular time series (or simulate one), call `run_single_its`, and write plots and tables to a folder.
+<!-- Use `its2s` in your own Python environment: load a tabular time series (or simulate one), call `run_single_its`, and write plots and tables to a folder. -->
 
-For comprehensive methodological details, see [insert paper link here when applicable].
+<!-- For comprehensive methodological details, see [insert paper link here when applicable]. -->
 
 ## Why `its2s`?
 
@@ -49,3 +61,9 @@ from its2s import compare_models, tune_model
 ## Getting help and contributing
 
 If you have a question, feature request, or bug, please [open an issue](https://github.com/causal-its/its2s/issues).
+
+## Contact
+
+Maintained by: 
+- Arnab Dey: [arnabxdey@gmail.com](mailto:arnabxdey@gmail.com) · [@arnabkdey on GitHub](https://github.com/arnabkdey)
+- Lauren Wilner: [wilnerl@uw.edu](mailto:wilnerl@uw.edu) · [@laurenwilner on GitHub](https://github.com/laurenwilner)
