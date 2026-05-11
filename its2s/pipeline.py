@@ -202,6 +202,8 @@ def run_single_its(
     date_col = date_col or config["data"]["date_col"]
     target_col = target_col or config["data"]["target_col"]
     covariate_cols = covariate_cols if covariate_cols is not None else config["data"]["covariate_cols"]
+    config["data"]["date_col"] = date_col
+    config["data"]["target_col"] = target_col
 
     # Resolve split-method config (function kwarg overrides config)
     periods_cfg = config["periods"]
