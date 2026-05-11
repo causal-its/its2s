@@ -27,6 +27,7 @@ def plot_counterfactual(pipeline_result, splits, save_path=None, config=None):
     plot_cfg = config.get("output", {})
     figsize = tuple(plot_cfg.get("plot_figsize", [14, 6]))
     dpi = plot_cfg.get("plot_dpi", 150)
+    date_col = config.get("data", {}).get("date_col", "ds")
 
     br = pipeline_result.bootstrap_result
     fr = pipeline_result.fit_result
@@ -36,11 +37,11 @@ def plot_counterfactual(pipeline_result, splits, save_path=None, config=None):
 
     # Observed series (full data across all splits)
     all_dates = pd.concat([
-        splits.train_df[["ds"]], splits.test_df[["ds"]], splits.holdout_df[["ds"]]
+        splits.train_df[[date_col]], splits.test_df[[date_col]], splits.holdout_df[[date_col]]
     ]).drop_duplicates()
-    all_dates = all_dates.sort_values("ds")
+    all_dates = all_dates.sort_values(date_col)
 
-    train_dates = pd.to_datetime(splits.train_df["ds"])
+    train_dates = pd.to_datetime(splits.train_df[date_col])
     train_y = splits.train_df[config.get("data", {}).get("target_col", "y")].values
 
     # Full observed
@@ -51,7 +52,7 @@ def plot_counterfactual(pipeline_result, splits, save_path=None, config=None):
         (splits.holdout_df, None, "#333333"),
     ]:
         if not split_df.empty and target_col in split_df.columns:
-            ax.plot(pd.to_datetime(split_df["ds"]), split_df[target_col],
+            ax.plot(pd.to_datetime(split_df[date_col]), split_df[target_col],
                     color=color, linewidth=0.6, alpha=0.7)
 
     # Observed label (single entry)
@@ -77,8 +78,8 @@ def plot_counterfactual(pipeline_result, splits, save_path=None, config=None):
 
     # Holdout shading
     if not splits.holdout_df.empty:
-        h_start = pd.to_datetime(splits.holdout_df["ds"]).min()
-        h_end = pd.to_datetime(splits.holdout_df["ds"]).max()
+        h_start = pd.to_datetime(splits.holdout_df[date_col]).min()
+        h_end = pd.to_datetime(splits.holdout_df[date_col]).max()
         ax.axvspan(h_start, h_end, color="#FEE08B", alpha=0.2, label="Holdout period")
 
     ax.set_xlabel("Date")
