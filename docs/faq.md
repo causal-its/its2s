@@ -11,6 +11,34 @@ correctly: `import cmdstanpy; cmdstanpy.cmdstan_path()`.
 
 ---
 
+**I get an XGBoost error about `libomp.dylib` not loaded on macOS with conda.**
+
+This affects Intel Mac users who install the package via the conda path in the
+[Setup guide](installation.md). The conda environment uses `pip install -e .` to
+install dependencies, and the pip-distributed XGBoost binary on Intel Macs links
+against OpenMP at a Homebrew path (`/usr/local/opt/libomp/`) that conda environments
+cannot see. Running `brew install libomp` does not fix it — Homebrew and conda manage
+libraries independently, and the library ends up in a location the conda environment
+never searches.
+
+After hitting the error, replace the pip-installed XGBoost with the conda-forge build,
+which bundles OpenMP internally:
+
+```bash
+conda install -c conda-forge xgboost
+```
+
+If that does not resolve it, install OpenMP directly into the conda environment:
+
+```bash
+conda install -c conda-forge "libcxx<17"
+```
+
+Note: this issue does not affect Apple Silicon (M-series) Macs or users following the
+`venv`-based installation path.
+
+---
+
 **I get an `ImportError` for NeuralProphet or PyTorch.**
 
 NeuralProphet is an optional dependency (~1 GB including PyTorch) and is not installed

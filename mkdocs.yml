@@ -19,6 +19,7 @@ nav:
       - "5. Bootstrap (MBB)": tutorials/step5_bootstrap_mbb.ipynb
       - "6. Full workflow": tutorials/step6_full_workflow.ipynb
   - API Reference: api.md
+  - FAQ: faq.md
   - Publications: publications.md
   - Citation: citation.md
 
