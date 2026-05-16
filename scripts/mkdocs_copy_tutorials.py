@@ -28,6 +28,11 @@ def _sync_dir(src: Path, dst: Path, suffixes: tuple[str, ...]) -> None:
 
 def on_pre_build(config):  # noqa: D401 -- MkDocs hook signature
     """Copy notebooks and the figures/ directory into docs/tutorials/."""
+    # Remove stale notebooks first so renamed or deleted notebooks do not persist
+    # across `mkdocs serve` restarts (serve does not clean docs/tutorials/).
+    if DST.exists():
+        for stale in DST.glob("*.ipynb"):
+            stale.unlink()
     # Only ship notebooks. Markdown files (e.g. understanding_its2s/README.md)
     # would otherwise land in docs/tutorials/ and trip mkdocs --strict because
     # they are not listed in the nav.
