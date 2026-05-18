@@ -15,3 +15,15 @@
 
 [build.environment]
   PYTHON_VERSION = "3.12"
+
+[[redirects]]
+  from   = "https://www.itslab.io/*"
+  to     = "https://itslab.io/:splat"
+  status = 301
+  force  = true
+
+[[redirects]]
+  from   = "https://causal-its.netlify.app/*"
+  to     = "https://itslab.io/:splat"
+  status = 301
+  force  = true
