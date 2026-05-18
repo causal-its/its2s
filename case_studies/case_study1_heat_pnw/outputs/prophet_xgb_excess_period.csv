@@ -1,0 +1,2 @@
+period,start_date,end_date,n_days,total_observed,total_expected,total_excess,excess_ci_lo,excess_ci_hi,excess_pct
+Full holdout,2021-06-26,2021-07-10,3,557.0,364.07526879261616,192.92473120738384,180.14349974399528,215.1333795331594,52.990342312231384
