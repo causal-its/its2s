@@ -441,6 +441,74 @@ class TestBlockLength:
         with pytest.raises(ValueError):
             auto_block_length(np.array([0.0]))
 
+    # --- grid search: plateau-detection logic (fast, no bootstrap) ---
+    def test_plateau_returns_smallest_stable_L(self):
+        from its2s.bootstrap.block_length import _select_plateau_index
+        # Width rises then flattens. Index 2 is the first width at the plateau
+        # value; from there the next `window` forward changes are all < tol, so
+        # it is the smallest L where increasing L no longer changes the width.
+        widths = np.array([1.0, 2.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0])
+        idx, rel = _select_plateau_index(widths, tol=0.05, window=3)
+        assert idx == 2
+        assert np.isnan(rel[0])
+
+    def test_plateau_not_triggered_by_short_flat_run(self):
+        from its2s.bootstrap.block_length import _select_plateau_index
+        # A leading flat run of 3 equal widths yields only 2 sub-tol steps before
+        # the jump at index 3, which is too few for window=3. The plateau is the
+        # genuinely sustained run of 9s starting at index 4.
+        widths = np.array([1.0, 1.0, 1.0, 5.0, 9.0, 9.0, 9.0, 9.0, 9.0])
+        idx, _ = _select_plateau_index(widths, tol=0.05, window=3)
+        assert idx == 4
+
+    def test_plateau_none_when_never_stable(self):
+        from its2s.bootstrap.block_length import _select_plateau_index
+        widths = np.array([1.0, 2.0, 4.0, 8.0, 16.0, 32.0])
+        idx, _ = _select_plateau_index(widths, tol=0.05, window=3)
+        assert idx is None
+
+    def test_plateau_ignores_nonfinite_steps(self):
+        from its2s.bootstrap.block_length import _select_plateau_index
+        # A NaN width (failed L) breaks any plateau spanning it.
+        widths = np.array([5.0, 5.0, np.nan, 5.0, 5.0, 5.0, 5.0])
+        idx, _ = _select_plateau_index(widths, tol=0.05, window=3)
+        assert idx == 3  # first 3-long all-finite, all-sub-tol run starts at 3
+
+    def test_grid_search_empty_range_raises(self):
+        from its2s.bootstrap.block_length import grid_search_block_length
+        with pytest.raises(ValueError):
+            grid_search_block_length(None, None, None, L_range=[])
+
+    def test_grid_search_nonpositive_L_raises(self):
+        from its2s.bootstrap.block_length import grid_search_block_length
+        with pytest.raises(ValueError):
+            grid_search_block_length(None, None, None, L_range=[0, 1, 2])
+
+    # --- grid search: end-to-end on a real fitted model (cheap settings) ---
+    def test_grid_search_end_to_end(self):
+        from its2s.bootstrap.block_length import grid_search_block_length
+        from its2s.models.arima import ARIMAModel
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
+        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        model = ARIMAModel(params={"seasonal": False, "m": 1, "stepwise": True,
+                                   "suppress_warnings": True})
+        model.fit(splits.train_df)
+        # A 4-point noisy width curve does not plateau, so this exercises the
+        # conservative no-plateau fallback (warn + return the largest L). The
+        # plateau-success path is covered by the _select_plateau_index tests.
+        with pytest.warns(UserWarning, match="No sustained CI-width plateau"):
+            L, diag = grid_search_block_length(
+                model, splits.train_df, splits.full_predict_df,
+                L_range=[2, 4, 6, 8], n_sim=10, ci_level=0.95,
+                tol=0.05, window=2, seed=42, return_diagnostics=True,
+            )
+        assert L == 8  # largest candidate, the fallback choice
+        assert list(diag.columns) == ["L", "ci_lo", "ci_hi", "ci_width", "rel_change"]
+        assert len(diag) == 4
+        # CI width is a non-negative quantity at every evaluated L.
+        assert (diag["ci_width"].dropna() >= 0).all()
+
 
 # ===================================================================
 # Excess & ATE
