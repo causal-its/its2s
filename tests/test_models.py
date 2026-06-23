@@ -507,6 +507,42 @@ class TestNeuralProphetSpecific:
         assert len(fr.fitted_values) == len(splits.train_df)
         assert len(pr.predicted) == len(splits.full_predict_df)
 
+    def test_warmup_rows_matches_n_lags(self):
+        """warmup_rows must expose the AR warmup length used by the bootstrap."""
+        from its2s.models.neuralprophet import NeuralProphetModel
+        model = NeuralProphetModel(params=_NP_FAST_PARAMS)
+        assert model.warmup_rows == _NP_FAST_PARAMS["n_lags"]
+
+    def test_mbb_succeeds_with_covariates_regression_issue_17(self):
+        """Regression for issue #17.
+
+        With lagged regressors, NeuralProphet cannot drop the AR-warmup rows whose
+        fitted values (and thus residuals) are NaN, so before the warmup-aware MBB
+        fix every simulation failed (n_successful == 0) and all CI columns were NaN.
+        The no-covariate path never reproduced this (NeuralProphet silently drops
+        NaN-y rows), so this test deliberately uses covariates.
+        """
+        from its2s.bootstrap.mbb import MovingBlockBootstrap
+        from its2s.data_prep import prepare_splits
+        from its2s.models.neuralprophet import NeuralProphetModel
+        df, intv, _, cov_cols = make_series_with_covariates(
+            n_pre=200, n_post=30, seed=1717)
+        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        # n_lags=14 (the package default) is needed to reproduce #17; the smaller
+        # fast-test warmup (n_lags=7) does not trigger the all-simulations-fail mode.
+        params = dict(_NP_FAST_PARAMS, n_lags=14)
+        model = NeuralProphetModel(params=params)
+        _run_quiet(model.fit, splits.train_df, covariate_cols=cov_cols)
+        n_sim = 5
+        mbb = MovingBlockBootstrap(n_sim=n_sim, block_length=7, n_jobs=1)
+        result = _run_quiet(mbb.generate_cis, model, splits.train_df,
+                            splits.full_predict_df, covariate_cols=cov_cols, seed=42)
+        # The #17 failure mode was n_successful == 0 with entirely-NaN CIs.
+        assert result.n_successful == n_sim
+        # CI columns must not be entirely NaN (predict-frame warmup rows may be NaN).
+        assert np.isfinite(result.conf_lo).any()
+        assert np.isfinite(result.conf_hi).any()
+
 
 # ===================================================================
 # End-to-End Integration (parametrized across all 4 models)

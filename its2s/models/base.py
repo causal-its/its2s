@@ -36,6 +36,18 @@ class BaseModel(ABC):
         self.params = params or {}
         self._fit_result: FitResult | None = None
 
+    @property
+    def warmup_rows(self) -> int:
+        """Number of leading training rows with undefined fitted values.
+
+        Autoregressive models (e.g. NeuralProphet with ``n_lags``) cannot produce
+        fitted values for the first few rows, leaving NaN in ``fitted_values`` and
+        ``residuals``. Consumers (e.g. the moving block bootstrap) use this to
+        exclude the warmup segment from residual resampling. Defaults to 0 for
+        models that fit every row.
+        """
+        return 0
+
     @abstractmethod
     def fit(self, train_df: pd.DataFrame, target_col: str = "y",
             date_col: str = "ds", covariate_cols: list[str] | None = None) -> FitResult:

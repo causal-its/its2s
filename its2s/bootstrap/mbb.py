@@ -15,45 +15,65 @@ from .base import BaseBootstrap, BootstrapCIResult
 logger = logging.getLogger(__name__)
 
 
-def _resample_blocks(residuals, block_length, rng):
+def _resample_blocks(residuals, block_length, rng, n_out=None):
     """Resample residuals using moving blocks.
 
     Parameters
     ----------
     residuals : np.ndarray
-        Original residuals from the fitted model.
+        Residuals to draw blocks from (must be free of NaN).
     block_length : int
         Length of each block.
     rng : np.random.Generator
         Random number generator.
+    n_out : int, optional
+        Length of the resampled series to return. Defaults to ``len(residuals)``.
+        Used to produce a series matching the non-warmup portion of the training
+        set when blocks are drawn from a shorter (warmup-excluded) residual vector.
 
     Returns
     -------
     np.ndarray
-        Resampled residuals of the same length as input.
+        Resampled residuals of length ``n_out``.
     """
     n = len(residuals)
-    n_blocks = math.ceil(n / block_length)
+    if n_out is None:
+        n_out = n
+    n_blocks = math.ceil(n_out / block_length)
     max_start = n - block_length
 
     if max_start < 1:
-        return rng.choice(residuals, size=n, replace=True)
+        return rng.choice(residuals, size=n_out, replace=True)
 
     starts = rng.integers(0, max_start + 1, size=n_blocks)
     blocks = [residuals[s : s + block_length] for s in starts]
-    resampled = np.concatenate(blocks)[:n]
+    resampled = np.concatenate(blocks)[:n_out]
     return resampled
 
 
 def _single_mbb_sim(sim_idx, model, train_df, target_df, fitted_values,
-                     residuals, block_length, target_col, date_col,
+                     resid_finite, warmup, block_length, target_col, date_col,
                      covariate_cols, seed):
-    """Run a single MBB simulation."""
+    """Run a single MBB simulation.
+
+    ``resid_finite`` holds the warmup-excluded, NaN-free residuals to resample
+    from; ``warmup`` is the number of leading rows whose fitted values are
+    undefined (e.g. AR warmup). Those rows are held at the observed target so the
+    refit never receives NaN; the rest are perturbed by resampled residuals.
+    """
     rng = np.random.default_rng(seed)
 
-    # Resample residuals and create perturbed training series
-    resampled_resid = _resample_blocks(residuals, block_length, rng)
-    perturbed_y = fitted_values + resampled_resid
+    n = len(fitted_values)
+
+    # Resample residuals for the non-warmup rows and create perturbed series
+    resampled_resid = _resample_blocks(resid_finite, block_length, rng,
+                                       n_out=n - warmup)
+    perturbed_y = np.asarray(fitted_values, dtype=float).copy()
+    if warmup > 0:
+        # Warmup rows have NaN fitted values; hold them at the observed target.
+        obs_y = train_df[target_col].to_numpy(dtype=float)
+        perturbed_y[:warmup] = obs_y[:warmup]
+    perturbed_y[warmup:] = np.asarray(fitted_values[warmup:], dtype=float) + resampled_resid
 
     # Build perturbed training DataFrame
     perturbed_train = train_df.copy()
@@ -90,6 +110,18 @@ class MovingBlockBootstrap(BaseBootstrap):
         fitted_values = model._fit_result.fitted_values
         residuals = model._fit_result.residuals
 
+        # Exclude the warmup segment (NaN fitted values, e.g. AR warmup) from the
+        # residuals we resample. Drop any remaining NaN defensively. The bootstrap
+        # then perturbs only the non-warmup rows; warmup rows are held at observed y.
+        warmup = int(getattr(model, "warmup_rows", 0))
+        resid_finite = np.asarray(residuals[warmup:], dtype=float)
+        resid_finite = resid_finite[np.isfinite(resid_finite)]
+        if resid_finite.size == 0:
+            raise ValueError(
+                "No finite residuals available for bootstrap resampling after "
+                "excluding the warmup segment."
+            )
+
         # Point prediction from original model
         point_pred = model.predict(target_df, target_col=target_col,
                                    date_col=date_col,
@@ -107,8 +139,8 @@ class MovingBlockBootstrap(BaseBootstrap):
         try:
             results = Parallel(n_jobs=self.n_jobs, prefer="threads")(
                 delayed(_single_mbb_sim)(
-                    i, model, train_df, target_df, fitted_values, residuals,
-                    self.block_length, target_col, date_col, covariate_cols,
+                    i, model, train_df, target_df, fitted_values, resid_finite,
+                    warmup, self.block_length, target_col, date_col, covariate_cols,
                     int(sim_seeds[i])
                 )
                 for i in range(self.n_sim)
@@ -132,8 +164,8 @@ class MovingBlockBootstrap(BaseBootstrap):
                 try:
                     preds = _single_mbb_sim(
                         i, model, train_df, target_df, fitted_values,
-                        residuals, self.block_length, target_col, date_col,
-                        covariate_cols, int(sim_seeds[i])
+                        resid_finite, warmup, self.block_length, target_col,
+                        date_col, covariate_cols, int(sim_seeds[i])
                     )
                     if preds is not None and len(preds) == n_dates:
                         pred_matrix[:, i] = preds
