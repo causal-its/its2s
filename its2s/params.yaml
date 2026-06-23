@@ -76,7 +76,7 @@ models:
 bootstrap:
   method: "mbb"
   n_sim: 1000
-  block_length: 14
+  block_length: 14   # in observations (residual rows), not days; calendar span depends on series frequency
   ci_method: "quantile"
   ci_level: 0.95
   n_jobs: 1

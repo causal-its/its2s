@@ -414,10 +414,32 @@ class TestBlockLength:
         from its2s.bootstrap.block_length import fixed_block_length
         assert fixed_block_length(7) == 7
 
-    def test_nppi_raises_not_implemented(self):
-        from its2s.bootstrap.block_length import nppi_block_length
-        with pytest.raises(NotImplementedError):
-            nppi_block_length(np.zeros(100))
+    def test_auto_block_length_returns_positive_int(self):
+        from its2s.bootstrap.block_length import auto_block_length
+        # AR(1) residuals with positive autocorrelation -> L should exceed 1.
+        rng = np.random.default_rng(0)
+        n = 500
+        e = rng.standard_normal(n)
+        x = np.zeros(n)
+        for t in range(1, n):
+            x[t] = 0.6 * x[t - 1] + e[t]
+        L = auto_block_length(x)
+        assert isinstance(L, int)
+        assert L >= 1
+
+    def test_auto_block_length_drops_nonfinite(self):
+        from its2s.bootstrap.block_length import auto_block_length
+        rng = np.random.default_rng(1)
+        x = rng.standard_normal(200)
+        x[:5] = np.nan  # AR-warmup NaNs, dropped defensively
+        L = auto_block_length(x)
+        assert isinstance(L, int)
+        assert L >= 1
+
+    def test_auto_block_length_too_short_raises(self):
+        from its2s.bootstrap.block_length import auto_block_length
+        with pytest.raises(ValueError):
+            auto_block_length(np.array([0.0]))
 
 
 # ===================================================================
