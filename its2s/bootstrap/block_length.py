@@ -33,6 +33,72 @@ def fixed_block_length(L=14):
     return L
 
 
+def resolve_block_length(value, residuals=None):
+    """Resolve a configured ``block_length`` value to a concrete integer.
+
+    Dispatch used by the pipeline so ``bootstrap.block_length`` in the config
+    may be a fixed int (default, backward compatible) or the string ``"auto"``.
+    The string ``"grid"`` is a deliberate ValueError: grid search is a one-off
+    CALIBRATION step (it refits the model n_sim times per candidate L), not
+    something to run inside every pipeline call -- use
+    :func:`grid_search_block_length` (exposed as ``calibrate_block_length`` in
+    the pipeline) once, then set ``block_length`` to the resulting int.
+
+    Parameters
+    ----------
+    value : int or str
+        An int (fixed length, >= 1) or ``"auto"`` (Politis-White via
+        :func:`auto_block_length`). ``"grid"`` raises with guidance.
+    residuals : array-like, optional
+        Warmup-excluded finite residuals the bootstrap resamples. Required only
+        when ``value == "auto"``.
+
+    Returns
+    -------
+    int
+        The resolved block length, in observations (>= 1).
+
+    Raises
+    ------
+    ValueError
+        If ``value`` is ``"grid"``, an unknown string, a non-positive int, or an
+        unsupported type; or if ``"auto"`` is requested without ``residuals``.
+    """
+    # bool is a subclass of int; reject it explicitly to avoid True -> 1.
+    if isinstance(value, bool):
+        raise ValueError(
+            f"block_length must be an int, 'auto', or 'grid'; got bool {value!r}."
+        )
+    if isinstance(value, (int, np.integer)):
+        L = int(value)
+        if L < 1:
+            raise ValueError(f"Fixed block_length must be >= 1, got {L}.")
+        return L
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key == "auto":
+            if residuals is None:
+                raise ValueError(
+                    "resolve_block_length('auto') requires the residual vector "
+                    "to estimate the optimal block length."
+                )
+            return auto_block_length(residuals)
+        if key == "grid":
+            raise ValueError(
+                "block_length='grid' is a one-off calibration mode and is not run "
+                "during the pipeline (grid search refits the model n_sim times per "
+                "candidate L). Run calibrate_block_length(...) once to obtain L, then "
+                "set bootstrap.block_length to that integer (or use 'auto')."
+            )
+        raise ValueError(
+            f"Unknown block_length '{value}'. Use a positive int, 'auto', or 'grid'."
+        )
+    raise ValueError(
+        f"block_length must be an int, 'auto', or 'grid'; got "
+        f"{type(value).__name__}."
+    )
+
+
 def auto_block_length(residuals):
     """Automatic moving-block-bootstrap block length (Politis and White, 2004).
 

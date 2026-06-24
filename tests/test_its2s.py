@@ -511,6 +511,88 @@ class TestBlockLength:
 
 
 # ===================================================================
+# Block-length wiring into config + pipeline (P5)
+# ===================================================================
+class TestBlockLengthWiring:
+    """resolve_block_length dispatch and its integration into the pipeline."""
+
+    # Fast ARIMA so the end-to-end pipeline tests stay cheap.
+    _ARIMA_FAST = {"seasonal": False, "m": 1, "stepwise": True,
+                   "suppress_warnings": True}
+
+    def _overrides(self, block_length):
+        return {
+            "bootstrap": {"n_sim": 10, "n_jobs": 1, "block_length": block_length},
+            "models": {"arima": dict(self._ARIMA_FAST)},
+        }
+
+    def test_resolve_int_passthrough(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        assert resolve_block_length(7) == 7
+
+    def test_resolve_auto_uses_residuals(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        rng = np.random.default_rng(0)
+        x = rng.standard_normal(300)
+        L = resolve_block_length("auto", residuals=x)
+        assert isinstance(L, int) and L >= 1
+
+    def test_resolve_grid_raises_with_calibration_hint(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        with pytest.raises(ValueError, match="calibrat"):
+            resolve_block_length("grid")
+
+    def test_resolve_unknown_string_raises(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        with pytest.raises(ValueError, match="Unknown block_length"):
+            resolve_block_length("weekly")
+
+    def test_resolve_auto_without_residuals_raises(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        with pytest.raises(ValueError, match="requires the residual"):
+            resolve_block_length("auto")
+
+    def test_resolve_nonpositive_int_raises(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        with pytest.raises(ValueError, match=">= 1"):
+            resolve_block_length(0)
+
+    def test_resolve_bool_rejected(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        # bool is an int subclass; True must not silently resolve to L=1.
+        with pytest.raises(ValueError, match="bool"):
+            resolve_block_length(True)
+
+    def test_pipeline_auto_resolves_to_int(self):
+        from its2s import run_single_its
+        df, intv, _ = make_short_series(n_pre=150, n_post=30, seed=77)
+        result = run_single_its(df, intv, model_name="arima", seed=42,
+                                config_overrides=self._overrides("auto"))
+        resolved = result.config["bootstrap"]["block_length"]
+        # The string is resolved to a concrete int and persisted on the config.
+        assert isinstance(resolved, int) and resolved >= 1
+
+    def test_pipeline_grid_rejected(self):
+        from its2s import run_single_its
+        df, intv, _ = make_short_series(n_pre=150, n_post=30, seed=77)
+        with pytest.raises(ValueError, match="calibrat"):
+            run_single_its(df, intv, model_name="arima", seed=42,
+                           config_overrides=self._overrides("grid"))
+
+    def test_calibrate_block_length_e2e(self):
+        from its2s import calibrate_block_length
+        df, intv, _ = make_short_series(n_pre=150, n_post=30, seed=77)
+        L, diag = calibrate_block_length(
+            df, intv, model_name="arima", seed=42,
+            config_overrides={"models": {"arima": dict(self._ARIMA_FAST)}},
+            L_range=[2, 4, 6], n_sim=10, tol=0.05, window=2,
+        )
+        assert isinstance(L, int) and L in [2, 4, 6]
+        assert list(diag.columns) == ["L", "ci_lo", "ci_hi", "ci_width", "rel_change"]
+        assert len(diag) == 3
+
+
+# ===================================================================
 # Excess & ATE
 # ===================================================================
 class TestExcess:

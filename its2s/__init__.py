@@ -8,12 +8,13 @@ from .compare import compare_models
 from .cross_validation import time_series_cv
 from .metrics.excess import calc_ate_summary
 from .settings import load_config
-from .pipeline import run_single_its
+from .pipeline import calibrate_block_length, run_single_its
 from .tuning import tune_model, TuningResult
 
 __all__ = [
     "__version__",
     "run_single_its",
+    "calibrate_block_length",
     "run_batch",
     "load_config",
     "time_series_cv",
