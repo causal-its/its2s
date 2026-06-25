@@ -509,6 +509,46 @@ class TestBlockLength:
         # CI width is a non-negative quantity at every evaluated L.
         assert (diag["ci_width"].dropna() >= 0).all()
 
+    def test_auto_block_length_increases_with_autocorrelation(self):
+        from its2s.bootstrap.block_length import auto_block_length
+
+        # The Politis-White rule should grow the block length as serial
+        # dependence strengthens: a near-white series needs a short block, a
+        # strongly autocorrelated one a longer block to preserve its dependence.
+        # We assert the ordering, not version-specific exact values (arch's
+        # optimal_block_length output shifts slightly across releases).
+        def ar1(phi, n=1000, seed=0):
+            rng = np.random.default_rng(seed)
+            e = rng.standard_normal(n)
+            x = np.zeros(n)
+            for t in range(1, n):
+                x[t] = phi * x[t - 1] + e[t]
+            return x
+
+        L_white = auto_block_length(ar1(0.0))
+        L_strong = auto_block_length(ar1(0.7))
+        assert L_strong > L_white
+
+    def test_grid_search_returns_bare_int_by_default(self):
+        from its2s.bootstrap.block_length import grid_search_block_length
+        from its2s.models.arima import ARIMAModel
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
+        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        model = ARIMAModel(params={"seasonal": False, "m": 1, "stepwise": True,
+                                   "suppress_warnings": True})
+        model.fit(splits.train_df)
+        # With return_diagnostics=False (the default) the function returns the
+        # selected L alone -- a bare int, not the (L, diagnostics) tuple. The
+        # noisy 4-point curve does not plateau, so the conservative fallback warns.
+        with pytest.warns(UserWarning, match="No sustained CI-width plateau"):
+            L = grid_search_block_length(
+                model, splits.train_df, splits.full_predict_df,
+                L_range=[2, 4, 6, 8], n_sim=10, seed=42,
+            )
+        assert isinstance(L, int)
+        assert L in [2, 4, 6, 8]
+
 
 # ===================================================================
 # Block-length wiring into config + pipeline (P5)
@@ -529,6 +569,13 @@ class TestBlockLengthWiring:
     def test_resolve_int_passthrough(self):
         from its2s.bootstrap.block_length import resolve_block_length
         assert resolve_block_length(7) == 7
+
+    def test_resolve_numpy_integer_passthrough(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        # np.integer is handled alongside Python int (residual-derived configs
+        # can carry numpy scalars); it must resolve to a plain int, not raise.
+        resolved = resolve_block_length(np.int64(9))
+        assert resolved == 9 and isinstance(resolved, int)
 
     def test_resolve_auto_uses_residuals(self):
         from its2s.bootstrap.block_length import resolve_block_length
