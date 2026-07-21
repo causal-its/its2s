@@ -671,6 +671,38 @@ class TestOutputs:
         fig = plot_counterfactual(pr, splits, save_path=None)
         assert isinstance(fig, matplotlib.figure.Figure)
 
+    def test_plot_counterfactual_uses_style_overrides(self):
+        from its2s.outputs.plots import plot_counterfactual
+        from its2s.data_prep import prepare_splits
+        import matplotlib.pyplot as plt
+
+        pr, _, _ = self._make_minimal_pipeline_result()
+        df, intv, _ = make_short_series(n_pre=60, n_post=30)
+        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        config = {
+            "output": {
+                "plot_colors": ["#984136", "#c26a7a", "#ecc0a1", "#f0f0e4"],
+                "plot_font_sizes": {
+                    "title": 15,
+                    "axis_label": 14,
+                    "tick": 13,
+                    "legend": 12,
+                },
+            },
+        }
+
+        fig = plot_counterfactual(pr, splits, save_path=None, config=config)
+        ax = fig.axes[0]
+        line_colors = {line.get_label(): line.get_color() for line in ax.lines}
+
+        assert line_colors["Model fit (train)"] == "#984136"
+        assert line_colors["Counterfactual prediction"] == "#c26a7a"
+        assert line_colors["Intervention"] == "#ecc0a1"
+        assert ax.title.get_fontsize() == 15
+        assert ax.xaxis.label.get_fontsize() == 14
+        assert ax.get_legend().get_texts()[0].get_fontsize() == 12
+        plt.close(fig)
+
     def test_save_excess_table_csv(self, tmp_path):
         from its2s.outputs.tables import save_excess_table
         _, _, er = self._make_minimal_pipeline_result()
