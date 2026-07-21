@@ -88,6 +88,19 @@ output:
   format: "csv"
   plot_dpi: 150
   plot_figsize: [14, 6]
+  # Sequence overrides map to: fit, counterfactual/CI, intervention, holdout.
+  # Dict overrides may also include observed.
+  plot_colors:
+    fit: "#2166AC"
+    counterfactual: "#B2182B"
+    intervention: "#4DAF4A"
+    holdout: "#FEE08B"
+    observed: "#333333"
+  plot_font_sizes:
+    title: 22
+    axis_label: 20
+    tick: 18
+    legend: 18
 
 parallel:
   n_jobs: 1
