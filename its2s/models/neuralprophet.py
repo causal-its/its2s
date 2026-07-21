@@ -22,6 +22,11 @@ class NeuralProphetModel(BaseModel):
         self._date_col = None
         self._target_col = None
 
+    @property
+    def warmup_rows(self):
+        """AR warmup length: the first ``n_lags`` rows have NaN fitted values."""
+        return int(self.params.get("n_lags", 14))
+
     def _build_model(self):
         p = self.params
         set_log_level("ERROR")

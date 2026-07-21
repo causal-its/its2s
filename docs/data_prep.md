@@ -80,9 +80,11 @@ frequencies, but requires configuration adjustments:
 - **NeuralProphet frequency**: the default `freq="D"` (daily). Override via
   `config_overrides={"models": {"neuralprophet": {"freq": "W"}}}` for weekly data.
 
-- **Block length**: the default MBB block length (`bootstrap.block_length=14`) was
-  derived for daily data. For other frequencies, this value may need to be adjusted
-  manually.
+- **Block length**: the default MBB block length (`bootstrap.block_length=14`) is in
+  observations (residual rows), not days; 14 was derived for the daily case study. For
+  other frequencies or autocorrelation structures, set `block_length="auto"` (estimated
+  from the residuals) or calibrate it with `calibrate_block_length(...)` rather than
+  relying on the default.
 
 ---
 

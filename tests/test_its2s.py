@@ -414,10 +414,229 @@ class TestBlockLength:
         from its2s.bootstrap.block_length import fixed_block_length
         assert fixed_block_length(7) == 7
 
-    def test_nppi_raises_not_implemented(self):
-        from its2s.bootstrap.block_length import nppi_block_length
-        with pytest.raises(NotImplementedError):
-            nppi_block_length(np.zeros(100))
+    def test_auto_block_length_returns_positive_int(self):
+        from its2s.bootstrap.block_length import auto_block_length
+        # AR(1) residuals with positive autocorrelation -> L should exceed 1.
+        rng = np.random.default_rng(0)
+        n = 500
+        e = rng.standard_normal(n)
+        x = np.zeros(n)
+        for t in range(1, n):
+            x[t] = 0.6 * x[t - 1] + e[t]
+        L = auto_block_length(x)
+        assert isinstance(L, int)
+        assert L >= 1
+
+    def test_auto_block_length_drops_nonfinite(self):
+        from its2s.bootstrap.block_length import auto_block_length
+        rng = np.random.default_rng(1)
+        x = rng.standard_normal(200)
+        x[:5] = np.nan  # AR-warmup NaNs, dropped defensively
+        L = auto_block_length(x)
+        assert isinstance(L, int)
+        assert L >= 1
+
+    def test_auto_block_length_too_short_raises(self):
+        from its2s.bootstrap.block_length import auto_block_length
+        with pytest.raises(ValueError):
+            auto_block_length(np.array([0.0]))
+
+    # --- grid search: plateau-detection logic (fast, no bootstrap) ---
+    def test_plateau_returns_smallest_stable_L(self):
+        from its2s.bootstrap.block_length import _select_plateau_index
+        # Width rises then flattens. Index 2 is the first width at the plateau
+        # value; from there the next `window` forward changes are all < tol, so
+        # it is the smallest L where increasing L no longer changes the width.
+        widths = np.array([1.0, 2.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0])
+        idx, rel = _select_plateau_index(widths, tol=0.05, window=3)
+        assert idx == 2
+        assert np.isnan(rel[0])
+
+    def test_plateau_not_triggered_by_short_flat_run(self):
+        from its2s.bootstrap.block_length import _select_plateau_index
+        # A leading flat run of 3 equal widths yields only 2 sub-tol steps before
+        # the jump at index 3, which is too few for window=3. The plateau is the
+        # genuinely sustained run of 9s starting at index 4.
+        widths = np.array([1.0, 1.0, 1.0, 5.0, 9.0, 9.0, 9.0, 9.0, 9.0])
+        idx, _ = _select_plateau_index(widths, tol=0.05, window=3)
+        assert idx == 4
+
+    def test_plateau_none_when_never_stable(self):
+        from its2s.bootstrap.block_length import _select_plateau_index
+        widths = np.array([1.0, 2.0, 4.0, 8.0, 16.0, 32.0])
+        idx, _ = _select_plateau_index(widths, tol=0.05, window=3)
+        assert idx is None
+
+    def test_plateau_ignores_nonfinite_steps(self):
+        from its2s.bootstrap.block_length import _select_plateau_index
+        # A NaN width (failed L) breaks any plateau spanning it.
+        widths = np.array([5.0, 5.0, np.nan, 5.0, 5.0, 5.0, 5.0])
+        idx, _ = _select_plateau_index(widths, tol=0.05, window=3)
+        assert idx == 3  # first 3-long all-finite, all-sub-tol run starts at 3
+
+    def test_grid_search_empty_range_raises(self):
+        from its2s.bootstrap.block_length import grid_search_block_length
+        with pytest.raises(ValueError):
+            grid_search_block_length(None, None, None, L_range=[])
+
+    def test_grid_search_nonpositive_L_raises(self):
+        from its2s.bootstrap.block_length import grid_search_block_length
+        with pytest.raises(ValueError):
+            grid_search_block_length(None, None, None, L_range=[0, 1, 2])
+
+    # --- grid search: end-to-end on a real fitted model (cheap settings) ---
+    def test_grid_search_end_to_end(self):
+        from its2s.bootstrap.block_length import grid_search_block_length
+        from its2s.models.arima import ARIMAModel
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
+        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        model = ARIMAModel(params={"seasonal": False, "m": 1, "stepwise": True,
+                                   "suppress_warnings": True})
+        model.fit(splits.train_df)
+        # A 4-point noisy width curve does not plateau, so this exercises the
+        # conservative no-plateau fallback (warn + return the largest L). The
+        # plateau-success path is covered by the _select_plateau_index tests.
+        with pytest.warns(UserWarning, match="No sustained CI-width plateau"):
+            L, diag = grid_search_block_length(
+                model, splits.train_df, splits.full_predict_df,
+                L_range=[2, 4, 6, 8], n_sim=10, ci_level=0.95,
+                tol=0.05, window=2, seed=42, return_diagnostics=True,
+            )
+        assert L == 8  # largest candidate, the fallback choice
+        assert list(diag.columns) == ["L", "ci_lo", "ci_hi", "ci_width", "rel_change"]
+        assert len(diag) == 4
+        # CI width is a non-negative quantity at every evaluated L.
+        assert (diag["ci_width"].dropna() >= 0).all()
+
+    def test_auto_block_length_increases_with_autocorrelation(self):
+        from its2s.bootstrap.block_length import auto_block_length
+
+        # The Politis-White rule should grow the block length as serial
+        # dependence strengthens: a near-white series needs a short block, a
+        # strongly autocorrelated one a longer block to preserve its dependence.
+        # We assert the ordering, not version-specific exact values (arch's
+        # optimal_block_length output shifts slightly across releases).
+        def ar1(phi, n=1000, seed=0):
+            rng = np.random.default_rng(seed)
+            e = rng.standard_normal(n)
+            x = np.zeros(n)
+            for t in range(1, n):
+                x[t] = phi * x[t - 1] + e[t]
+            return x
+
+        L_white = auto_block_length(ar1(0.0))
+        L_strong = auto_block_length(ar1(0.7))
+        assert L_strong > L_white
+
+    def test_grid_search_returns_bare_int_by_default(self):
+        from its2s.bootstrap.block_length import grid_search_block_length
+        from its2s.models.arima import ARIMAModel
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
+        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        model = ARIMAModel(params={"seasonal": False, "m": 1, "stepwise": True,
+                                   "suppress_warnings": True})
+        model.fit(splits.train_df)
+        # With return_diagnostics=False (the default) the function returns the
+        # selected L alone -- a bare int, not the (L, diagnostics) tuple. The
+        # noisy 4-point curve does not plateau, so the conservative fallback warns.
+        with pytest.warns(UserWarning, match="No sustained CI-width plateau"):
+            L = grid_search_block_length(
+                model, splits.train_df, splits.full_predict_df,
+                L_range=[2, 4, 6, 8], n_sim=10, seed=42,
+            )
+        assert isinstance(L, int)
+        assert L in [2, 4, 6, 8]
+
+
+# ===================================================================
+# Block-length wiring into config + pipeline (P5)
+# ===================================================================
+class TestBlockLengthWiring:
+    """resolve_block_length dispatch and its integration into the pipeline."""
+
+    # Fast ARIMA so the end-to-end pipeline tests stay cheap.
+    _ARIMA_FAST = {"seasonal": False, "m": 1, "stepwise": True,
+                   "suppress_warnings": True}
+
+    def _overrides(self, block_length):
+        return {
+            "bootstrap": {"n_sim": 10, "n_jobs": 1, "block_length": block_length},
+            "models": {"arima": dict(self._ARIMA_FAST)},
+        }
+
+    def test_resolve_int_passthrough(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        assert resolve_block_length(7) == 7
+
+    def test_resolve_numpy_integer_passthrough(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        # np.integer is handled alongside Python int (residual-derived configs
+        # can carry numpy scalars); it must resolve to a plain int, not raise.
+        resolved = resolve_block_length(np.int64(9))
+        assert resolved == 9 and isinstance(resolved, int)
+
+    def test_resolve_auto_uses_residuals(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        rng = np.random.default_rng(0)
+        x = rng.standard_normal(300)
+        L = resolve_block_length("auto", residuals=x)
+        assert isinstance(L, int) and L >= 1
+
+    def test_resolve_grid_raises_with_calibration_hint(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        with pytest.raises(ValueError, match="calibrat"):
+            resolve_block_length("grid")
+
+    def test_resolve_unknown_string_raises(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        with pytest.raises(ValueError, match="Unknown block_length"):
+            resolve_block_length("weekly")
+
+    def test_resolve_auto_without_residuals_raises(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        with pytest.raises(ValueError, match="requires the residual"):
+            resolve_block_length("auto")
+
+    def test_resolve_nonpositive_int_raises(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        with pytest.raises(ValueError, match=">= 1"):
+            resolve_block_length(0)
+
+    def test_resolve_bool_rejected(self):
+        from its2s.bootstrap.block_length import resolve_block_length
+        # bool is an int subclass; True must not silently resolve to L=1.
+        with pytest.raises(ValueError, match="bool"):
+            resolve_block_length(True)
+
+    def test_pipeline_auto_resolves_to_int(self):
+        from its2s import run_single_its
+        df, intv, _ = make_short_series(n_pre=150, n_post=30, seed=77)
+        result = run_single_its(df, intv, model_name="arima", seed=42,
+                                config_overrides=self._overrides("auto"))
+        resolved = result.config["bootstrap"]["block_length"]
+        # The string is resolved to a concrete int and persisted on the config.
+        assert isinstance(resolved, int) and resolved >= 1
+
+    def test_pipeline_grid_rejected(self):
+        from its2s import run_single_its
+        df, intv, _ = make_short_series(n_pre=150, n_post=30, seed=77)
+        with pytest.raises(ValueError, match="calibrat"):
+            run_single_its(df, intv, model_name="arima", seed=42,
+                           config_overrides=self._overrides("grid"))
+
+    def test_calibrate_block_length_e2e(self):
+        from its2s import calibrate_block_length
+        df, intv, _ = make_short_series(n_pre=150, n_post=30, seed=77)
+        L, diag = calibrate_block_length(
+            df, intv, model_name="arima", seed=42,
+            config_overrides={"models": {"arima": dict(self._ARIMA_FAST)}},
+            L_range=[2, 4, 6], n_sim=10, tol=0.05, window=2,
+        )
+        assert isinstance(L, int) and L in [2, 4, 6]
+        assert list(diag.columns) == ["L", "ci_lo", "ci_hi", "ci_width", "rel_change"]
+        assert len(diag) == 3
 
 
 # ===================================================================

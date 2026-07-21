@@ -84,14 +84,17 @@ that help explain the baseline trend.
 
 **What block length should I use for the Moving Block Bootstrap?**
 
-The default `block_length=14` is appropriate for daily data with moderate
-autocorrelation (approximately two weeks of temporal dependence). It is not
-automatically adapted to other data configurations.
+The block length is measured in observations (residual rows), not calendar days; its
+implied calendar span depends on the series frequency. The default `block_length=14`
+(14 observations, i.e. about two weeks on a daily series) is appropriate for daily data
+with moderate autocorrelation and is not automatically adapted to other configurations.
 
 For non-daily data or series with substantially different autocorrelation structure,
-the default may produce CI coverage that is too narrow or too wide. Adjust via
-`config_overrides={"bootstrap": {"block_length": <value>}}`. Automated block length
-selection is not currently implemented.
+the default may produce CI coverage that is too narrow or too wide. You can set the
+block length three ways via `config_overrides={"bootstrap": {"block_length": <value>}}`:
+a fixed int; or `"auto"`, which estimates it from the residuals using the Politis-White
+rule at run time. To reproduce the paper's CI-width-stability criterion, run
+`calibrate_block_length(...)` once and set `block_length` to the integer it returns.
 
 ---
 
@@ -117,7 +120,8 @@ Yes, but configuration adjustments are required:
 - Set `m` for ARIMA: `config_overrides={"models": {"arima": {"m": 52}}}` for weekly,
   `{"m": 12}` for monthly.
 - Set `freq` for NeuralProphet: `config_overrides={"models": {"neuralprophet": {"freq": "W"}}}`.
-- Consider adjusting `block_length` for the MBB (default 14 is calibrated for daily data).
+- Consider adjusting `block_length` for the MBB (it is in observations, not days; the
+  default 14 was calibrated on the daily case study, or use `"auto"`).
 
 ---
 

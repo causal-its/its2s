@@ -23,4 +23,8 @@ dependencies:
   - xgboost>=2.0
   - pip
   - pip:
+      # arch (Politis-White auto block length) via pip, NOT conda-forge arch-py:
+      # the env's numpy/pandas/scipy/statsmodels are pip-managed, so conda arch-py
+      # would drag in a major numpy/pandas upgrade and destabilize the neural stack.
+      - arch>=6.0
       - -e .
