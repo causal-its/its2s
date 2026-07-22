@@ -13,6 +13,7 @@ from .bootstrap.mbb import MovingBlockBootstrap
 from .diagnostics import compute_diagnostics, DiagnosticsResult
 from .settings import get_model_config, load_config
 from .data_prep import prepare_splits
+from .frequency import resolve_frequency
 from .validation import validate_inputs
 from .metrics.error_metrics import compute_metrics, MetricsResult
 from .metrics.excess import ExcessResult, calc_ate_summary, calculate_excess
@@ -103,6 +104,9 @@ class PipelineResult:
     diagnostics : DiagnosticsResult or None
         Residual diagnostics (Ljung-Box, Shapiro-Wilk, ACF lags). None if
         diagnostics could not be computed.
+    series_frequency : SeriesFrequency or None
+        Frequency resolved from the data (its2s.frequency), the single
+        source for all window-unit interpretation.
     """
 
     model_name: str
@@ -113,6 +117,7 @@ class PipelineResult:
     excess_table: ExcessResult
     config: dict
     diagnostics: DiagnosticsResult | None = None
+    series_frequency: object | None = None
 
     def summary(self):
         """Return a human-readable summary string."""
@@ -269,6 +274,11 @@ def run_single_its(
                 f"Expected 'error', 'drop', or 'interpolate'."
             )
 
+    # 1d. Resolve series frequency once, from the data, after missing-data
+    # handling so that rows dropped above surface here as gaps (#48, #52).
+    series_freq = resolve_frequency(pd.to_datetime(df[date_col]).sort_values())
+    logger.info("Resolved series frequency: %s", series_freq.alias)
+
     # 2. Prepare splits
     splits = prepare_splits(
         df,
@@ -288,6 +298,11 @@ def run_single_its(
 
     # 3. Instantiate model
     model_params = get_model_config(config, model_name)
+    if model_name == "neuralprophet":
+        # freq comes from the resolved series frequency, never from user
+        # config: a declared value cannot disagree with the data (#52).
+        model_params = dict(model_params)
+        model_params["freq"] = series_freq.alias
     model = _get_model(model_name, model_params)
 
     # 3b. Warn about long-horizon ARIMA forecasts (B5)
@@ -374,6 +389,7 @@ def run_single_its(
             excess_table=excess_table,
             config=config,
             diagnostics=diag,
+            series_frequency=series_freq,
         )
 
         plot_counterfactual(
@@ -401,4 +417,5 @@ def run_single_its(
         excess_table=excess_table,
         config=config,
         diagnostics=diag,
+        series_frequency=series_freq,
     )

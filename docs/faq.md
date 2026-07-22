@@ -116,8 +116,12 @@ Yes, but configuration adjustments are required:
 
 - Set `m` for ARIMA: `config_overrides={"models": {"arima": {"m": 52}}}` for weekly,
   `{"m": 12}` for monthly.
-- Set `freq` for NeuralProphet: `config_overrides={"models": {"neuralprophet": {"freq": "W"}}}`.
-- Consider adjusting `block_length` for the MBB (default 14 is calibrated for daily data).
+- Series frequency itself is resolved automatically from the date column; the series
+  must be a complete, regularly spaced grid (no gaps or duplicate dates), or the
+  pipeline raises an error naming the first offending timestamp.
+- Consider adjusting `block_length` for the MBB (default 14 is calibrated for daily
+  data; block length is measured in observations, so 14 means 14 weeks on a weekly
+  series).
 
 ---
 

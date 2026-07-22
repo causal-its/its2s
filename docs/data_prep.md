@@ -77,8 +77,13 @@ frequencies, but requires configuration adjustments:
   seasonal cycle. For weekly data, set `m=52`; for monthly data, set `m=12`. Override
   via `config_overrides={"models": {"arima": {"m": 52}}}`.
 
-- **NeuralProphet frequency**: the default `freq="D"` (daily). Override via
-  `config_overrides={"models": {"neuralprophet": {"freq": "W"}}}` for weekly data.
+- **Series frequency**: resolved automatically from the date column and passed to any
+  model that needs it (currently NeuralProphet). There is no `freq` setting to
+  declare. The resolver requires the series to be a complete, regularly spaced grid:
+  gaps, duplicate dates, or irregular spacing raise an error naming the first
+  offending timestamp. Note this also applies after `missing_data="drop"` removes
+  rows -- a mid-series drop creates a gap; fill or aggregate to a regular grid
+  instead.
 
 - **Block length**: the default MBB block length (`bootstrap.block_length=14`) was
   derived for daily data. For other frequencies, this value may need to be adjusted
