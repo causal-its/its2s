@@ -18,11 +18,13 @@ data:
   missing_data: "error"   # "error", "drop", or "interpolate"
 
 periods:
-  split_method: percent       # "percent" (default) | "days"
-  test_pct: 0.20              # used when split_method=percent
-  holdout_pct: 1.0             # used when split_method=percent
-  test_days: 365              # used when split_method=days
-  holdout_days: 365           # used when split_method=days
+  split_method: percent       # "percent" (default) | "days" | "observations"
+  test_pct: 0.20              # used when split_method=percent (fraction of pre-intervention observations)
+  holdout_pct: 1.0             # used when split_method=percent (fraction of post-intervention observations)
+  test_days: 365              # used when split_method=days (calendar days, whatever the series frequency)
+  holdout_days: 365           # used when split_method=days (calendar days, whatever the series frequency)
+  # test_obs: 52              # used when split_method=observations (row counts; required, no defaults)
+  # holdout_obs: 52
 
 models:
   prophet_xgb:

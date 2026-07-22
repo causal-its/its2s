@@ -74,3 +74,75 @@ def test_split_default_short_series_no_empty_splits():
     assert len(splits.train_df) > 0
     assert len(splits.test_df) > 0
     assert len(splits.holdout_df) > 0
+
+
+def _make_regular_series(n_pre, n_post, freq, start="2020-01-06", seed=0):
+    n = n_pre + n_post
+    dates = pd.date_range(start, periods=n, freq=freq)
+    rng = np.random.default_rng(seed)
+    y = 100 + rng.normal(0, 1, n)
+    df = pd.DataFrame({"ds": dates, "y": y})
+    return df, dates[n_pre]
+
+
+def test_split_percent_weekly_counts_observations():
+    """Issue #28: the percent path sizes windows in observations, not days."""
+    df, intv = _make_regular_series(n_pre=181, n_post=52, freq="W-MON")
+    splits = prepare_splits(df, intv, split_method="percent",
+                            test_pct=0.20, holdout_pct=1.0)
+    assert len(splits.test_df) == 36   # round(0.20 * 181), was 5 under #28
+    assert len(splits.train_df) == 145
+    assert len(splits.holdout_df) == 52  # all post rows, was ~8 under #28
+    assert len(splits.full_predict_df) == 36 + 52
+
+
+def test_split_method_observations():
+    df, intv = _make_regular_series(n_pre=181, n_post=52, freq="W-MON")
+    splits = prepare_splits(df, intv, split_method="observations",
+                            test_obs=36, holdout_obs=52)
+    assert len(splits.test_df) == 36
+    assert len(splits.train_df) == 145
+    assert len(splits.holdout_df) == 52
+
+
+def test_split_method_observations_requires_explicit_counts():
+    df, intv = _make_series(n_pre=100, n_post=50)
+    with pytest.raises(ValueError, match="test_obs"):
+        prepare_splits(df, intv, split_method="observations")
+
+
+def test_split_cross_method_args_raise():
+    """Issue #54: arguments for another split method are never silently ignored."""
+    df, intv = _make_series(n_pre=100, n_post=50)
+    with pytest.raises(ValueError, match="test_days"):
+        prepare_splits(df, intv, test_days=30, holdout_days=30)  # percent default
+    with pytest.raises(ValueError, match="test_pct"):
+        prepare_splits(df, intv, split_method="days", test_pct=0.20)
+    with pytest.raises(ValueError, match="test_obs"):
+        prepare_splits(df, intv, split_method="percent", test_obs=20)
+
+
+def test_validate_days_weekly_within_span_passes():
+    """Issue #49 false positive: 252 days is valid on a 180-week pre span."""
+    from its2s.validation import validate_inputs
+    df, intv = _make_regular_series(n_pre=181, n_post=52, freq="W-MON")
+    validate_inputs(df, intv, "ds", "y", None, "prophet_xgb",
+                    split_method="days", test_days=252, holdout_days=52)
+
+
+def test_validate_days_beyond_span_raises():
+    """Issue #49 false negative: 30 days exceeds ~8.3 days of hourly data."""
+    from its2s.validation import validate_inputs
+    df, intv = _make_regular_series(n_pre=200, n_post=24, freq="h")
+    with pytest.raises(ValueError, match="test_days"):
+        validate_inputs(df, intv, "ds", "y", None, "prophet_xgb",
+                        split_method="days", test_days=30, holdout_days=1)
+
+
+def test_validate_observations_empty_train_raises():
+    from its2s.validation import validate_inputs
+    df, intv = _make_series(n_pre=100, n_post=50)
+    with pytest.raises(ValueError, match="test_obs"):
+        validate_inputs(df, intv, "ds", "y", None, "prophet_xgb",
+                        split_method="observations", test_obs=100,
+                        holdout_obs=50)

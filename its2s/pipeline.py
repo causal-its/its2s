@@ -210,24 +210,35 @@ def run_single_its(
     config["data"]["date_col"] = date_col
     config["data"]["target_col"] = target_col
 
-    # Resolve split-method config (function kwarg overrides config)
+    # Resolve split-method config (function kwarg overrides config). Only the
+    # arguments belonging to the resolved method are read and passed on:
+    # prepare_splits raises on cross-method arguments (#28, #54).
     periods_cfg = config["periods"]
     if split_method is not None:
         periods_cfg["split_method"] = split_method
     split_method_resolved = periods_cfg.get("split_method", "percent")
-    test_pct_resolved = periods_cfg.get("test_pct", 0.20)
-    holdout_pct_resolved = periods_cfg.get("holdout_pct", 1.0)
-    test_days_resolved = periods_cfg.get("test_days", 365)
-    holdout_days_resolved = periods_cfg.get("holdout_days", 365)
+    if split_method_resolved == "days":
+        split_kwargs = {
+            "test_days": periods_cfg.get("test_days", 365),
+            "holdout_days": periods_cfg.get("holdout_days", 365),
+        }
+    elif split_method_resolved == "observations":
+        split_kwargs = {
+            "test_obs": periods_cfg.get("test_obs"),
+            "holdout_obs": periods_cfg.get("holdout_obs"),
+        }
+    else:
+        # "percent" is the default; an unknown method raises in prepare_splits.
+        split_kwargs = {
+            "test_pct": periods_cfg.get("test_pct", 0.20),
+            "holdout_pct": periods_cfg.get("holdout_pct", 1.0),
+        }
 
     # 1b. Validate inputs
     validate_inputs(df, intervention_date, date_col, target_col,
                     covariate_cols, model_name,
                     split_method=split_method_resolved,
-                    test_pct=test_pct_resolved,
-                    holdout_pct=holdout_pct_resolved,
-                    test_days=test_days_resolved,
-                    holdout_days=holdout_days_resolved)
+                    **split_kwargs)
 
     # M2-6: Check date-sort and warn if DataFrame is unsorted
     dates_check = pd.to_datetime(df[date_col])
@@ -279,21 +290,13 @@ def run_single_its(
     series_freq = resolve_frequency(pd.to_datetime(df[date_col]).sort_values())
     logger.info("Resolved series frequency: %s", series_freq.alias)
 
-    # 2. Prepare splits
+    # 2. Prepare splits (prepare_splits logs the resulting window sizes)
     splits = prepare_splits(
         df,
         intervention_date,
         date_col=date_col,
         split_method=split_method_resolved,
-        test_pct=test_pct_resolved,
-        holdout_pct=holdout_pct_resolved,
-        test_days=test_days_resolved,
-        holdout_days=holdout_days_resolved,
-    )
-
-    logger.info(
-        "Splits: train=%d, test=%d, holdout=%d",
-        len(splits.train_df), len(splits.test_df), len(splits.holdout_df),
+        **split_kwargs,
     )
 
     # 3. Instantiate model

@@ -26,24 +26,36 @@ all anchored on `intervention_date`:
 
 | Period | Role |
 |--------|------|
-| **Training** | Historical baseline used to fit each candidate model. Ends `test_days + holdout_days` before `intervention_date`. |
-| **Testing** (pre-event) | Held-out pre-event window used for model selection only. Spans `test_days` days immediately before `intervention_date`. Must not include the event. |
-| **Post-event** | During and after the intervention. The selected model predicts the counterfactual here. Spans `holdout_days` days after `intervention_date`. |
+| **Training** | Historical baseline used to fit each candidate model. Ends where the test window begins. |
+| **Testing** (pre-event) | Held-out pre-event window used for model selection only. Sits immediately before `intervention_date`. Must not include the event. |
+| **Post-event** | During and after the intervention. The selected model predicts the counterfactual here. |
+
+Window units are explicit per split method. `"percent"` and `"observations"` size
+windows in observations (rows of the regular series); `"days"` sizes them in calendar
+days, so on a weekly series `test_days=365` spans about 52 observations. Passing an
+argument that belongs to a different `split_method` raises an error rather than being
+silently ignored.
 
 Key configuration parameters (set in `params.yaml` or via `config_overrides`):
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `periods.split_method` | `"percent"` | `"percent"` (default) sizes test/holdout windows as fractions of the data; `"days"` uses explicit day counts |
-| `periods.test_pct` | 0.20 | Fraction of pre-intervention rows used as the test window (`split_method="percent"`) |
-| `periods.holdout_pct` | 1.0 | Fraction of post-intervention rows used as the holdout window (`split_method="percent"`) |
-| `periods.test_days` | 365 | Pre-event test window in days (`split_method="days"`) |
-| `periods.holdout_days` | 365 | Post-event projection window in days (`split_method="days"`) |
+| `periods.split_method` | `"percent"` | `"percent"` (default) sizes windows as fractions of the available observations; `"days"` uses calendar-day counts; `"observations"` uses explicit observation counts |
+| `periods.test_pct` | 0.20 | Fraction of pre-intervention observations used as the test window (`split_method="percent"`) |
+| `periods.holdout_pct` | 1.0 | Fraction of post-intervention observations used as the holdout window (`split_method="percent"`) |
+| `periods.test_days` | 365 | Pre-event test window in calendar days (`split_method="days"`) |
+| `periods.holdout_days` | 365 | Post-event projection window in calendar days (`split_method="days"`) |
+| `periods.test_obs` | none (required) | Pre-event test window in observations (`split_method="observations"`) |
+| `periods.holdout_obs` | none (required) | Post-event projection window in observations (`split_method="observations"`) |
 
 The percent-based default sizes the test window proportionally to the available
 pre-intervention data, so the pipeline runs without manual tuning on short series. Use
 `split_method="days"` when the test/holdout window length must match a fixed calendar
-duration (e.g., a pre-registered analysis specifying a 365-day post-event window).
+duration (e.g., a pre-registered analysis specifying a 365-day post-event window), and
+`split_method="observations"` when it must contain an exact number of observations
+(e.g., a 78-week test window on weekly data). The resulting train/test/holdout sizes
+are logged at run time as observation counts and percentages, so a mis-sized window is
+visible immediately.
 
 The test period is used only for model selection — it is never used to fit the final
 model. The final model is calibrated on the full pre-event dataset (training + test)

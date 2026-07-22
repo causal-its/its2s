@@ -87,7 +87,7 @@ class TestDataPrep:
     def test_prepare_splits_basic(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
-        splits = prepare_splits(df, intv, test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
         train_max = splits.train_df["ds"].max()
         test_min = splits.test_df["ds"].min()
         test_max = splits.test_df["ds"].max()
@@ -98,7 +98,7 @@ class TestDataPrep:
     def test_prepare_splits_lengths(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
-        splits = prepare_splits(df, intv, test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
         assert len(splits.train_df) == 730  # 1095 - 365
         assert len(splits.test_df) == 365
         assert len(splits.holdout_df) == 365
@@ -106,14 +106,14 @@ class TestDataPrep:
     def test_prepare_splits_full_predict(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
-        splits = prepare_splits(df, intv, test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
         expected_len = len(splits.test_df) + len(splits.holdout_df)
         assert len(splits.full_predict_df) == expected_len
 
     def test_prepare_splits_string_date(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
-        splits = prepare_splits(df, str(intv), test_days=365, holdout_days=365)
+        splits = prepare_splits(df, str(intv), split_method="days", test_days=365, holdout_days=365)
         assert isinstance(splits.intervention_date, pd.Timestamp)
 
     def test_prepare_splits_custom_date_col(self):
@@ -121,25 +121,26 @@ class TestDataPrep:
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
         df = df.rename(columns={"ds": "date"})
         splits = prepare_splits(df, intv, date_col="date",
+                                split_method="days",
                                 test_days=365, holdout_days=365)
         assert "date" in splits.train_df.columns
 
     def test_prepare_splits_short_series(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=30, n_post=30)
-        splits = prepare_splits(df, intv, test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
         assert len(splits.train_df) == 0
 
     def test_prepare_splits_intervention_at_start(self):
         from its2s.data_prep import prepare_splits
         df, intv = make_intervention_at_boundary("start")
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         assert len(splits.train_df) == 0 or len(splits.test_df) == 0
 
     def test_prepare_splits_intervention_at_end(self):
         from its2s.data_prep import prepare_splits
         df, intv = make_intervention_at_boundary("end")
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         assert len(splits.holdout_df) <= 1
 
 
@@ -353,7 +354,7 @@ class TestBootstrap:
         from its2s.models.arima import ARIMAModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         model = ARIMAModel(params={"seasonal": False, "m": 1, "stepwise": True,
                                    "suppress_warnings": True})
         model.fit(splits.train_df)
@@ -370,7 +371,7 @@ class TestBootstrap:
         from its2s.models.arima import ARIMAModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         model = ARIMAModel(params={})
         mbb = MovingBlockBootstrap(n_sim=5, block_length=7, n_jobs=1)
         with pytest.raises(ValueError, match="fitted"):
@@ -655,7 +656,7 @@ class TestOutputs:
         from its2s.data_prep import prepare_splits
         pr, _, _ = self._make_minimal_pipeline_result()
         df, intv, _ = make_short_series(n_pre=60, n_post=30)
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         save_path = tmp_path / "test_plot.png"
         plot_counterfactual(pr, splits, save_path=save_path)
         assert save_path.exists()
@@ -667,7 +668,7 @@ class TestOutputs:
         import matplotlib.figure
         pr, _, _ = self._make_minimal_pipeline_result()
         df, intv, _ = make_short_series(n_pre=60, n_post=30)
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         fig = plot_counterfactual(pr, splits, save_path=None)
         assert isinstance(fig, matplotlib.figure.Figure)
 
@@ -678,7 +679,7 @@ class TestOutputs:
 
         pr, _, _ = self._make_minimal_pipeline_result()
         df, intv, _ = make_short_series(n_pre=60, n_post=30)
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         config = {
             "output": {
                 "plot_colors": ["#984136", "#c26a7a", "#ecc0a1", "#f0f0e4"],
