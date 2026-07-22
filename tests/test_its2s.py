@@ -935,6 +935,28 @@ class TestCrossValidation:
                            split_method="days",
                            config_overrides=self._CV_CFG)
 
+    def test_pct_args_under_observations_raise(self):
+        # Cross-method window args raise instead of being silently
+        # ignored (GH #55).
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=619)
+        with pytest.raises(ValueError, match="test_pct"):
+            time_series_cv(df, intv, model_name="arima",
+                           n_folds=2, test_obs=60, min_train_obs=180,
+                           test_pct=0.10,
+                           config_overrides=self._CV_CFG)
+
+    def test_obs_args_under_percent_raise(self):
+        # The reverse direction: obs args under split_method="percent"
+        # used to be overwritten by pct-derived values (GH #55).
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=619)
+        with pytest.raises(ValueError, match="min_train_obs"):
+            time_series_cv(df, intv, model_name="arima",
+                           n_folds=2, split_method="percent",
+                           min_train_obs=180,
+                           config_overrides=self._CV_CFG)
+
     def test_fold_result_fields(self):
         from its2s.cross_validation import time_series_cv, CVFoldResult
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=607)

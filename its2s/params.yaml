@@ -129,11 +129,12 @@ tuning:
   test_pct: 0.10              # CV fold test window = 10% of pre-intervention
   min_train_pct: 0.50         # initial training = 50% of pre-intervention
   skip_pct: 0.0               # gap between folds (0% = back-to-back)
-  # CV windows are observation counts, never calendar days (GH #39); the
-  # values below equal calendar days only on daily data.
-  test_obs: 365               # used when split_method=observations
-  min_train_obs: 730
-  skip_obs: 0
+  # Only the window family matching split_method may be set; keys from the
+  # other family raise instead of being silently ignored (GH #55). With
+  # split_method: observations, replace the three pct keys above with e.g.:
+  # test_obs: 365             # CV windows are observation counts, never
+  # min_train_obs: 730        # calendar days (GH #39); these equal calendar
+  # skip_obs: 0               # days only on daily data
   metric: "rmse"
   n_jobs: 1
   seed: 42

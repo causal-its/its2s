@@ -12,7 +12,7 @@ import pandas as pd
 from joblib import Parallel, delayed
 from scipy.stats import qmc
 
-from .cross_validation import time_series_cv
+from .cross_validation import _CV_METHOD_ARGS, time_series_cv
 
 logger = logging.getLogger(__name__)
 
@@ -215,14 +215,14 @@ def tune_model(
     model_name: str,
     n_trials: int | None = None,
     n_folds: int = 5,
-    test_obs: int = 365,
-    min_train_obs: int = 730,
-    skip_obs: int = 0,
+    test_obs: int | None = None,
+    min_train_obs: int | None = None,
+    skip_obs: int | None = None,
     cv_end_date=None,
     split_method: str = "percent",
-    test_pct: float = 0.10,
-    min_train_pct: float = 0.50,
-    skip_pct: float = 0.0,
+    test_pct: float | None = None,
+    min_train_pct: float | None = None,
+    skip_pct: float | None = None,
     metric: str = "rmse",
     config_path=None,
     n_jobs: int = 1,
@@ -238,8 +238,13 @@ def tune_model(
     see time_series_cv. The R reference CV settings are 5 folds, 12-month
     validation window, 2-year initial training window, 12-month skip between
     folds; on DAILY data those translate to:
-        n_folds=5, test_obs=365, min_train_obs=730, skip_obs=365
+        split_method="observations", n_folds=5,
+        test_obs=365, min_train_obs=730, skip_obs=365
     (on any other frequency, convert months to observation counts first).
+
+    Only the window arguments belonging to the chosen ``split_method`` may be
+    passed; arguments for the other method raise ValueError rather than being
+    silently ignored.
 
     To prevent tuning from seeing the held-out evaluation window that
     run_single_its uses, set cv_end_date to intervention_date minus a calendar
@@ -259,14 +264,31 @@ def tune_model(
         values matching R reference (100 for most models, 75 for neuralprophet).
     n_folds : int
         Number of expanding-window CV folds.
+    split_method : {"percent", "observations"}
+        "percent" (default): size the fold windows as fractions of the CV
+        observations via `test_pct`/`min_train_pct`/`skip_pct`.
+        "observations": size them as explicit observation counts via
+        `test_obs`/`min_train_obs`/`skip_obs`.
     test_obs : int
-        Validation window per fold in observations.
+        Validation window per fold in observations. Defaults to 365.
+        Only with ``split_method="observations"``.
     min_train_obs : int
         Minimum training window for the first fold, in observations.
+        Defaults to 730. Only with ``split_method="observations"``.
     skip_obs : int
         Gap in observations between consecutive fold validation windows. Set
         to 365 on daily data to match the R reference (skip = "12 months").
-        Defaults to 0 (adjacent folds).
+        Defaults to 0 (adjacent folds). Only with
+        ``split_method="observations"``.
+    test_pct : float
+        Validation window per fold as a fraction of the CV observations.
+        Defaults to 0.10. Only with ``split_method="percent"``.
+    min_train_pct : float
+        Minimum training window as a fraction of the CV observations.
+        Defaults to 0.50. Only with ``split_method="percent"``.
+    skip_pct : float
+        Gap between folds as a fraction of the CV observations. Defaults to
+        0.0. Only with ``split_method="percent"``.
     cv_end_date : str or pd.Timestamp, optional
         Upper bound on data used for CV folds. Must be <= intervention_date.
         Pass a timestamp early enough that tuning folds cannot overlap the
@@ -298,6 +320,7 @@ def tune_model(
         result = tune_model(
             df, "2025-01-07", "prophet_xgb",
             n_trials=100, n_folds=5,
+            split_method="observations",
             test_obs=365, min_train_obs=730, skip_obs=365,
             cv_end_date=pd.Timestamp("2025-01-07") - pd.Timedelta(days=365),
         )
@@ -315,6 +338,31 @@ def tune_model(
     if metric not in ("rmse", "mae"):
         raise ValueError(f"metric must be 'rmse' or 'mae', got '{metric}'")
 
+    if split_method == "days":
+        raise ValueError(
+            "CV windows are observation counts; use split_method="
+            "'observations' with test_obs/min_train_obs/skip_obs. "
+            "Calendar-day windows exist only in prepare_splits."
+        )
+    if split_method not in _CV_METHOD_ARGS:
+        raise ValueError(
+            f"split_method must be 'percent' or 'observations', "
+            f"got {split_method!r}."
+        )
+
+    passed = {"test_obs": test_obs, "min_train_obs": min_train_obs,
+              "skip_obs": skip_obs, "test_pct": test_pct,
+              "min_train_pct": min_train_pct, "skip_pct": skip_pct}
+    allowed = _CV_METHOD_ARGS[split_method]
+    foreign = [name for name, value in passed.items()
+               if value is not None and name not in allowed]
+    if foreign:
+        raise ValueError(
+            f"Arguments {foreign} do not apply to split_method="
+            f"{split_method!r}, which uses {list(allowed)}. Pass the "
+            "arguments for the chosen split_method only."
+        )
+
     n_trials = n_trials if n_trials is not None else _DEFAULT_N_TRIALS[model_name]
 
     # M2-3: Lower-bound parameter checks
@@ -325,25 +373,32 @@ def tune_model(
             f"n_folds must be >= 2, got {n_folds}. "
             "At least 2 folds are required for meaningful cross-validation."
         )
-    if split_method == "observations" and test_obs < 1:
-        raise ValueError(f"test_obs must be >= 1, got {test_obs}.")
+
+    cv_kwargs = {
+        "n_folds":        n_folds,
+        "cv_end_date":    cv_end_date,
+        "split_method":   split_method,
+        "config_path":    config_path,
+    }
+    if split_method == "observations":
+        test_obs = 365 if test_obs is None else test_obs
+        min_train_obs = 730 if min_train_obs is None else min_train_obs
+        skip_obs = 0 if skip_obs is None else skip_obs
+        if test_obs < 1:
+            raise ValueError(f"test_obs must be >= 1, got {test_obs}.")
+        cv_kwargs.update(test_obs=test_obs, min_train_obs=min_train_obs,
+                         skip_obs=skip_obs)
+    else:
+        test_pct = 0.10 if test_pct is None else test_pct
+        min_train_pct = 0.50 if min_train_pct is None else min_train_pct
+        skip_pct = 0.0 if skip_pct is None else skip_pct
+        cv_kwargs.update(test_pct=test_pct, min_train_pct=min_train_pct,
+                         skip_pct=skip_pct)
+
     search_space = _SEARCH_SPACES[model_name]
 
     flat_trials = _sample_lhs(search_space, n_trials, seed)
     nested_trials = [_unflatten_params(p) for p in flat_trials]
-
-    cv_kwargs = {
-        "n_folds":        n_folds,
-        "test_obs":       test_obs,
-        "min_train_obs":  min_train_obs,
-        "skip_obs":       skip_obs,
-        "cv_end_date":    cv_end_date,
-        "split_method":   split_method,
-        "test_pct":       test_pct,
-        "min_train_pct":  min_train_pct,
-        "skip_pct":       skip_pct,
-        "config_path":    config_path,
-    }
 
     logger.info(
         "Tuning %s: %d trials x %d folds (metric=%s, n_jobs=%d)",

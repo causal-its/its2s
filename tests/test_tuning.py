@@ -135,6 +135,7 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
+            split_method="observations",
             test_obs=60,
             min_train_obs=400,
             n_jobs=1,
@@ -149,6 +150,7 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
+            split_method="observations",
             test_obs=60,
             min_train_obs=400,
             n_jobs=1,
@@ -168,6 +170,7 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
+            split_method="observations",
             test_obs=60,
             min_train_obs=400,
             n_jobs=1,
@@ -182,6 +185,7 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
+            split_method="observations",
             test_obs=60,
             min_train_obs=400,
             n_jobs=1,
@@ -198,6 +202,7 @@ class TestTuneModel:
             model_name="prophet_xgb",
             n_trials=3,
             n_folds=2,
+            split_method="observations",
             test_obs=60,
             min_train_obs=400,
             n_jobs=1,
@@ -215,6 +220,7 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
+            split_method="observations",
             test_obs=60,
             min_train_obs=400,
             metric="mae",
@@ -239,6 +245,7 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
+            split_method="observations",
             test_obs=60,
             min_train_obs=400,
             n_jobs=1,
@@ -255,6 +262,7 @@ class TestTuneModel:
                 model_name="not_a_model",
                 n_trials=2,
                 n_folds=2,
+                split_method="observations",
                 test_obs=60,
                 min_train_obs=400,
             )
@@ -267,6 +275,7 @@ class TestTuneModel:
                 model_name="arima",
                 n_trials=2,
                 n_folds=2,
+                split_method="observations",
                 test_obs=60,
                 min_train_obs=400,
                 metric="mape",
@@ -279,6 +288,7 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
+            split_method="observations",
             test_obs=60,
             min_train_obs=400,
             seed=77,
@@ -315,12 +325,17 @@ class TestTuneModel:
 
 class TestTuningConfig:
     def test_tuning_section_in_default_config(self):
+        # The shipped config sets exactly one window family (percent); the
+        # obs family absent, so it cannot carry silently ignored keys (GH #55).
         from its2s.settings import load_config
         cfg = load_config()
         assert "tuning" in cfg
         assert cfg["tuning"]["n_folds"] == 5
-        assert cfg["tuning"]["test_obs"] == 365
-        assert cfg["tuning"]["min_train_obs"] == 730
+        assert cfg["tuning"]["split_method"] == "percent"
+        assert cfg["tuning"]["test_pct"] == 0.10
+        assert cfg["tuning"]["min_train_pct"] == 0.50
+        assert "test_obs" not in cfg["tuning"]
+        assert "min_train_obs" not in cfg["tuning"]
         assert cfg["tuning"]["metric"] == "rmse"
 
     def test_get_tuning_config(self):
@@ -346,3 +361,42 @@ class TestTuningConfig:
         cfg["tuning"]["min_train_days"] = 730
         with pytest.raises(ValueError, match="min_train_days"):
             get_tuning_config(cfg)
+
+    def test_cross_method_keys_raise(self):
+        # Keys from the non-selected window family raise instead of being
+        # silently ignored (GH #55).
+        from its2s.settings import get_tuning_config, load_config
+        cfg = load_config()
+        cfg["tuning"]["test_obs"] = 60  # split_method is percent
+        with pytest.raises(ValueError, match="test_obs"):
+            get_tuning_config(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Cross-method window arguments raise (GH #55)
+# ---------------------------------------------------------------------------
+
+class TestTuneModelCrossMethodArgs:
+    def _df(self):
+        dates = pd.date_range("2020-01-01", periods=600, freq="D")
+        return pd.DataFrame({"ds": dates, "y": np.arange(600.0)})
+
+    def test_obs_args_under_percent_raise(self):
+        # The pre-fix behavior: obs args under the default percent method
+        # were silently discarded. Now they raise.
+        with pytest.raises(ValueError, match="test_obs"):
+            tune_model(
+                self._df(), intervention_date="2021-06-01",
+                model_name="arima", n_trials=2, n_folds=2,
+                test_obs=60, min_train_obs=400,
+            )
+
+    def test_pct_args_under_observations_raise(self):
+        with pytest.raises(ValueError, match="test_pct"):
+            tune_model(
+                self._df(), intervention_date="2021-06-01",
+                model_name="arima", n_trials=2, n_folds=2,
+                split_method="observations",
+                test_obs=60, min_train_obs=400,
+                test_pct=0.10,
+            )

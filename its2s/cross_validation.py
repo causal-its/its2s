@@ -53,11 +53,17 @@ class CVResult:
         return "\n".join(lines)
 
 
+_CV_METHOD_ARGS = {
+    "observations": ("test_obs", "min_train_obs", "skip_obs"),
+    "percent":      ("test_pct", "min_train_pct", "skip_pct"),
+}
+
+
 def time_series_cv(df, intervention_date, model_name="arima",
-                   n_folds=5, test_obs=90, min_train_obs=365,
-                   skip_obs=0, cv_end_date=None,
+                   n_folds=5, test_obs=None, min_train_obs=None,
+                   skip_obs=None, cv_end_date=None,
                    split_method="observations",
-                   test_pct=0.10, min_train_pct=0.50, skip_pct=0.0,
+                   test_pct=None, min_train_pct=None, skip_pct=None,
                    date_col=None, target_col=None, covariate_cols=None,
                    config_path=None, config_overrides=None):
     """Evaluate a model using expanding-window time-series cross-validation.
@@ -70,6 +76,10 @@ def time_series_cv(df, intervention_date, model_name="arima",
     implementation's ``skip`` parameter). The CV window can be capped at
     ``cv_end_date`` to prevent tuning or evaluation folds from touching the
     held-out test period defined by ``run_single_its``.
+
+    Only the window arguments belonging to the chosen ``split_method`` may be
+    passed; arguments for the other method raise ValueError rather than being
+    silently ignored.
 
     Fold layout (train = expanding, test = fixed width, all in observations):
 
@@ -88,14 +98,31 @@ def time_series_cv(df, intervention_date, model_name="arima",
         Model to evaluate.
     n_folds : int
         Maximum number of CV folds to attempt.
+    split_method : {"observations", "percent"}
+        "observations" (default): size the fold windows as explicit
+        observation counts via `test_obs`/`min_train_obs`/`skip_obs`.
+        "percent": size them as fractions of the CV data's observation count
+        via `test_pct`/`min_train_pct`/`skip_pct`.
     test_obs : int
-        Length of each validation window in observations.
+        Length of each validation window in observations. Defaults to 90.
+        Only with ``split_method="observations"``.
     min_train_obs : int
         Minimum training window for the first fold, in observations.
+        Defaults to 365. Only with ``split_method="observations"``.
     skip_obs : int
         Gap in observations between the end of one validation window and the
         start of the next. Set to 0 for adjacent non-overlapping folds. The R
         reference uses skip = "12 months" (365 observations for daily data).
+        Defaults to 0. Only with ``split_method="observations"``.
+    test_pct : float
+        Validation window per fold as a fraction of the CV observations.
+        Defaults to 0.10. Only with ``split_method="percent"``.
+    min_train_pct : float
+        Minimum training window as a fraction of the CV observations.
+        Defaults to 0.50. Only with ``split_method="percent"``.
+    skip_pct : float
+        Gap between folds as a fraction of the CV observations. Defaults to
+        0.0. Only with ``split_method="percent"``.
     cv_end_date : str or pd.Timestamp, optional
         Upper bound on the data used for CV. Must be <= intervention_date.
         To keep CV folds out of the held-out evaluation window used by
@@ -118,6 +145,31 @@ def time_series_cv(df, intervention_date, model_name="arima",
     """
     # Lazy import to avoid circular dependency
     from .pipeline import _get_model
+
+    if split_method == "days":
+        raise ValueError(
+            "CV windows are observation counts; use split_method="
+            "'observations' with test_obs/min_train_obs/skip_obs. "
+            "Calendar-day windows exist only in prepare_splits."
+        )
+    if split_method not in _CV_METHOD_ARGS:
+        raise ValueError(
+            f"split_method must be 'percent' or 'observations', "
+            f"got {split_method!r}."
+        )
+
+    passed = {"test_obs": test_obs, "min_train_obs": min_train_obs,
+              "skip_obs": skip_obs, "test_pct": test_pct,
+              "min_train_pct": min_train_pct, "skip_pct": skip_pct}
+    allowed = _CV_METHOD_ARGS[split_method]
+    foreign = [name for name, value in passed.items()
+               if value is not None and name not in allowed]
+    if foreign:
+        raise ValueError(
+            f"Arguments {foreign} do not apply to split_method="
+            f"{split_method!r}, which uses {list(allowed)}. Pass the "
+            "arguments for the chosen split_method only."
+        )
 
     config = load_config(config_path, config_overrides)
     date_col = date_col or config["data"]["date_col"]
@@ -146,6 +198,9 @@ def time_series_cv(df, intervention_date, model_name="arima",
     n_cv = len(cv_df)
 
     if split_method == "percent":
+        test_pct = 0.10 if test_pct is None else test_pct
+        min_train_pct = 0.50 if min_train_pct is None else min_train_pct
+        skip_pct = 0.0 if skip_pct is None else skip_pct
         budget = min_train_pct + n_folds * test_pct
         if budget > 1.0:
             raise ValueError(
@@ -162,17 +217,10 @@ def time_series_cv(df, intervention_date, model_name="arima",
         test_obs = max(1, int(round(test_pct * n_cv)))
         min_train_obs = max(1, int(round(min_train_pct * n_cv)))
         skip_obs = max(0, int(round(skip_pct * n_cv)))
-    elif split_method == "days":
-        raise ValueError(
-            "CV windows are observation counts; use split_method="
-            "'observations' with test_obs/min_train_obs/skip_obs. "
-            "Calendar-day windows exist only in prepare_splits."
-        )
-    elif split_method != "observations":
-        raise ValueError(
-            f"split_method must be 'percent' or 'observations', "
-            f"got {split_method!r}."
-        )
+    else:
+        test_obs = 90 if test_obs is None else test_obs
+        min_train_obs = 365 if min_train_obs is None else min_train_obs
+        skip_obs = 0 if skip_obs is None else skip_obs
 
     if n_cv < min_train_obs + test_obs:
         raise ValueError(
