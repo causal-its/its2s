@@ -9,7 +9,7 @@ import pandas as pd
 
 
 def save_excess_table(excess_result, path, fmt="csv"):
-    """Save daily and period excess tables.
+    """Save per-observation and period excess tables.
 
     Parameters
     ----------
@@ -22,15 +22,15 @@ def save_excess_table(excess_result, path, fmt="csv"):
     path = Path(path)
 
     if fmt == "csv":
-        if not excess_result.daily_excess.empty:
-            excess_result.daily_excess.to_csv(path, index=False)
+        if not excess_result.obs_excess.empty:
+            excess_result.obs_excess.to_csv(path, index=False)
         if not excess_result.period_excess.empty:
             period_path = path.with_name(path.stem + "_period" + path.suffix)
             excess_result.period_excess.to_csv(period_path, index=False)
     elif fmt == "xlsx":
         with pd.ExcelWriter(path) as writer:
-            if not excess_result.daily_excess.empty:
-                excess_result.daily_excess.to_excel(writer, sheet_name="Daily", index=False)
+            if not excess_result.obs_excess.empty:
+                excess_result.obs_excess.to_excel(writer, sheet_name="Obs", index=False)
             if not excess_result.period_excess.empty:
                 excess_result.period_excess.to_excel(writer, sheet_name="Period", index=False)
 

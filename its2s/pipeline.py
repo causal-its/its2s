@@ -97,8 +97,9 @@ class PipelineResult:
     metrics_test : MetricsResult
         RMSE, MAE, MAPE, and R2 computed on the test period.
     excess_table : ExcessResult
-        Day-level excess estimates with CIs for the holdout period. Pass to
-        calc_ate_summary() to get total and mean-daily ATE with CIs.
+        Per-observation excess estimates with CIs for the holdout period.
+        Pass to calc_ate_summary() to get total and per-observation ATE
+        with CIs.
     config : dict
         Full resolved config dict used for this run.
     diagnostics : DiagnosticsResult or None
@@ -134,16 +135,16 @@ class PipelineResult:
         mt = self.metrics_test
         lines.append(f"  RMSE={mt.rmse:.4f}  MAE={mt.mae:.4f}  "
                       f"MAPE={mt.mape:.2f}%  R2={mt.r2:.4f}")
-        if not self.excess_table.daily_excess.empty:
+        if not self.excess_table.obs_excess.empty:
             ate = calc_ate_summary(self.excess_table)
             total = ate[ate["metric"] == "Total ATE"].iloc[0]
-            daily = ate[ate["metric"] == "Mean Daily ATE"].iloc[0]
+            per_obs = ate[ate["metric"] == "Mean ATE per obs"].iloc[0]
             lines.append("")
             lines.append(f"Total ATE: {total['estimate']:.2f} "
                           f"[{total['ci_lo']:.2f}, {total['ci_hi']:.2f}]")
-            lines.append(f"Mean Daily ATE: {daily['estimate']:.4f} "
-                          f"[{daily['ci_lo']:.4f}, {daily['ci_hi']:.4f}]")
-            lines.append(f"Holdout days: {int(total['n_days'])}")
+            lines.append(f"Mean ATE per obs: {per_obs['estimate']:.4f} "
+                          f"[{per_obs['ci_lo']:.4f}, {per_obs['ci_hi']:.4f}]")
+            lines.append(f"Holdout obs: {int(total['n_obs'])}")
         if self.diagnostics:
             d = self.diagnostics
             lines.append("")
@@ -405,7 +406,7 @@ def run_single_its(
             {"train": metrics_train, "test": metrics_test},
             out / f"{model_name}_metrics.csv",
         )
-        if not excess_table.daily_excess.empty:
+        if not excess_table.obs_excess.empty:
             ate = calc_ate_summary(excess_table)
             save_ate_summary(ate, out / f"{model_name}_ate_summary.csv")
 

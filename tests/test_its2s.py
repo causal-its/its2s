@@ -425,7 +425,7 @@ class TestBlockLength:
 # Excess & ATE
 # ===================================================================
 class TestExcess:
-    def test_daily_excess_columns(self):
+    def test_obs_excess_columns(self):
         from its2s.metrics.excess import calculate_excess
         br = make_mock_bootstrap_result()
         intervention_date = pd.Timestamp("2021-01-31")
@@ -434,14 +434,14 @@ class TestExcess:
                          "expected_ci_hi", "excess", "excess_ci_lo",
                          "excess_ci_hi", "excess_pct", "excess_pct_ci_lo",
                          "excess_pct_ci_hi"}
-        assert expected_cols == set(result.daily_excess.columns)
+        assert expected_cols == set(result.obs_excess.columns)
 
-    def test_daily_excess_values(self):
+    def test_obs_excess_values(self):
         from its2s.metrics.excess import calculate_excess
         br = make_mock_bootstrap_result(actual_shift=10.0)
         intervention_date = pd.Timestamp("2021-01-31")
         result = calculate_excess(br, intervention_date)
-        mean_excess = result.daily_excess["excess"].mean()
+        mean_excess = result.obs_excess["excess"].mean()
         assert mean_excess > 5.0
 
     def test_period_excess_full_holdout(self):
@@ -452,23 +452,64 @@ class TestExcess:
         assert len(result.period_excess) >= 1
         assert "Full holdout" in result.period_excess["period"].values
 
-    def test_period_excess_custom_periods(self):
+    def test_period_excess_custom_periods_days(self):
         from its2s.metrics.excess import calculate_excess
         br = make_mock_bootstrap_result()
         intervention_date = pd.Timestamp("2021-01-31")
-        periods = [{"name": "First 7 days", "start_offset": 0, "end_offset": 7}]
+        periods = [{"name": "First 7 days",
+                    "start_offset_days": 0, "end_offset_days": 7}]
         result = calculate_excess(br, intervention_date, periods_config=periods)
         period_names = result.period_excess["period"].values
         assert "First 7 days" in period_names
         first7 = result.period_excess[result.period_excess["period"] == "First 7 days"]
-        assert first7["n_days"].values[0] == 8  # inclusive
+        assert first7["n_obs"].values[0] == 8  # inclusive
+
+    def test_period_excess_custom_periods_obs(self):
+        from its2s.metrics.excess import calculate_excess
+        # Weekly grid: obs and calendar days disagree, so this exercises the
+        # row-slicing family specifically (4 rows span 22 calendar days).
+        br = make_mock_bootstrap_result(freq="W-SUN")
+        dates = pd.to_datetime(br.dates)
+        intervention_date = dates[30]
+        periods = [{"name": "First 4 obs",
+                    "start_offset_obs": 0, "end_offset_obs": 3}]
+        result = calculate_excess(br, intervention_date, periods_config=periods)
+        first4 = result.period_excess[result.period_excess["period"] == "First 4 obs"]
+        assert first4["n_obs"].values[0] == 4
+        assert first4["start_date"].values[0] == dates[30]
+        assert first4["end_date"].values[0] == dates[33]
+
+    def test_period_excess_legacy_offset_keys_raise(self):
+        from its2s.metrics.excess import calculate_excess
+        br = make_mock_bootstrap_result()
+        intervention_date = pd.Timestamp("2021-01-31")
+        periods = [{"name": "Legacy", "start_offset": 0, "end_offset": 7}]
+        with pytest.raises(ValueError, match="no longer accepted"):
+            calculate_excess(br, intervention_date, periods_config=periods)
+
+    def test_period_excess_mixed_offset_units_raise(self):
+        from its2s.metrics.excess import calculate_excess
+        br = make_mock_bootstrap_result()
+        intervention_date = pd.Timestamp("2021-01-31")
+        periods = [{"name": "Mixed",
+                    "start_offset_days": 0, "end_offset_obs": 7}]
+        with pytest.raises(ValueError, match="mixes"):
+            calculate_excess(br, intervention_date, periods_config=periods)
+
+    def test_period_excess_missing_offsets_raise(self):
+        from its2s.metrics.excess import calculate_excess
+        br = make_mock_bootstrap_result()
+        intervention_date = pd.Timestamp("2021-01-31")
+        periods = [{"name": "No offsets"}]
+        with pytest.raises(ValueError, match="no offsets"):
+            calculate_excess(br, intervention_date, periods_config=periods)
 
     def test_excess_no_holdout(self):
         from its2s.metrics.excess import calculate_excess
         br = make_mock_bootstrap_result()
         future_date = pd.Timestamp("2025-01-01")
         result = calculate_excess(br, future_date)
-        assert result.daily_excess.empty
+        assert result.obs_excess.empty
         assert result.period_excess.empty
 
     def test_excess_pct_calculation(self):
@@ -476,7 +517,7 @@ class TestExcess:
         br = make_mock_bootstrap_result(base_predicted=100.0, actual_shift=10.0)
         intervention_date = pd.Timestamp("2021-01-31")
         result = calculate_excess(br, intervention_date)
-        row = result.daily_excess.iloc[0]
+        row = result.obs_excess.iloc[0]
         if row["expected"] != 0:
             expected_pct = row["excess"] / row["expected"] * 100
             assert row["excess_pct"] == pytest.approx(expected_pct, rel=1e-6)
@@ -486,20 +527,20 @@ class TestExcess:
         br = make_mock_bootstrap_result()
         intervention_date = pd.Timestamp("2021-01-31")
         excess = calculate_excess(br, intervention_date)
-        ate = calc_ate_summary(excess.daily_excess)
+        ate = calc_ate_summary(excess.obs_excess)
         assert len(ate) == 2
-        assert set(ate["metric"].values) == {"Total ATE", "Mean Daily ATE"}
+        assert set(ate["metric"].values) == {"Total ATE", "Mean ATE per obs"}
 
     def test_calc_ate_summary_values(self):
         from its2s.metrics.excess import calc_ate_summary, calculate_excess
         br = make_mock_bootstrap_result(actual_shift=10.0)
         intervention_date = pd.Timestamp("2021-01-31")
         excess = calculate_excess(br, intervention_date)
-        ate = calc_ate_summary(excess.daily_excess)
+        ate = calc_ate_summary(excess.obs_excess)
         total = ate[ate["metric"] == "Total ATE"]["estimate"].values[0]
-        mean_daily = ate[ate["metric"] == "Mean Daily ATE"]["estimate"].values[0]
-        n = len(excess.daily_excess)
-        assert mean_daily == pytest.approx(total / n, rel=1e-6)
+        mean_per_obs = ate[ate["metric"] == "Mean ATE per obs"]["estimate"].values[0]
+        n = len(excess.obs_excess)
+        assert mean_per_obs == pytest.approx(total / n, rel=1e-6)
 
     def test_calc_ate_summary_empty(self):
         from its2s.metrics.excess import calc_ate_summary
@@ -615,7 +656,7 @@ class TestOutputs:
         )
         mr = MetricsResult(rmse=1.0, mae=0.8, mape=5.0, smape=4.5, mase=0.9, r2=0.95)
         er = ExcessResult(
-            daily_excess=pd.DataFrame({
+            obs_excess=pd.DataFrame({
                 "date": pd.date_range("2021-01-31", periods=10),
                 "observed": np.full(10, 110.0),
                 "expected": np.full(10, 100.0),
@@ -632,7 +673,7 @@ class TestOutputs:
                 "period": ["Full holdout"],
                 "start_date": [pd.Timestamp("2021-01-31")],
                 "end_date": [pd.Timestamp("2021-02-09")],
-                "n_days": [10],
+                "n_obs": [10],
                 "total_observed": [1100.0],
                 "total_expected": [1000.0],
                 "total_excess": [100.0],
@@ -736,7 +777,7 @@ class TestOutputs:
         from its2s.outputs.tables import save_ate_summary
         from its2s.metrics.excess import calc_ate_summary
         _, _, er = self._make_minimal_pipeline_result()
-        ate = calc_ate_summary(er.daily_excess)
+        ate = calc_ate_summary(er.obs_excess)
         path = tmp_path / "ate.csv"
         save_ate_summary(ate, path)
         assert path.exists()

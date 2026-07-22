@@ -76,14 +76,14 @@ def compare_models(df, intervention_date, model_names=None,
                 "bootstrap_n_successful": result.bootstrap_result.n_successful,
             }
 
-            if not result.excess_table.daily_excess.empty:
+            if not result.excess_table.obs_excess.empty:
                 ate = calc_ate_summary(result.excess_table)
                 total_row = ate[ate["metric"] == "Total ATE"].iloc[0]
-                daily_row = ate[ate["metric"] == "Mean Daily ATE"].iloc[0]
+                per_obs_row = ate[ate["metric"] == "Mean ATE per obs"].iloc[0]
                 row["total_ate"] = total_row["estimate"]
                 row["total_ate_ci_lo"] = total_row["ci_lo"]
                 row["total_ate_ci_hi"] = total_row["ci_hi"]
-                row["mean_daily_ate"] = daily_row["estimate"]
+                row["mean_ate_per_obs"] = per_obs_row["estimate"]
 
             rows.append(row)
 

@@ -523,7 +523,7 @@ class TestModelIntegration:
         result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                             seed=42, config_overrides=cfg)
         assert result.model_name == model_name
-        assert not result.excess_table.daily_excess.empty
+        assert not result.excess_table.obs_excess.empty
         assert np.isfinite(result.metrics_test.rmse)
 
     @pytest.mark.parametrize("model_name", _MODEL_NAMES_MARKS)
@@ -582,7 +582,7 @@ class TestModelIntegration:
         result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                             covariate_cols=cov_cols, seed=42, config_overrides=cfg)
         assert result.model_name == model_name
-        assert not result.excess_table.daily_excess.empty
+        assert not result.excess_table.obs_excess.empty
         assert np.isfinite(result.metrics_test.rmse)
 
     @pytest.mark.parametrize("model_name", _MODEL_NAMES_MARKS)
@@ -661,8 +661,8 @@ class TestModelRobustness:
         try:
             result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                                 seed=42, config_overrides=cfg)
-            if not result.excess_table.daily_excess.empty:
-                mean_excess = result.excess_table.daily_excess["excess"].mean()
+            if not result.excess_table.obs_excess.empty:
+                mean_excess = result.excess_table.obs_excess["excess"].mean()
                 assert abs(mean_excess) < 10.0
         except Exception as e:
             pytest.skip(f"[{model_name}] fails on constant data: {type(e).__name__}: {e}")
@@ -676,7 +676,7 @@ class TestModelRobustness:
         cfg = _e2e_config(model_name)
         result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                             seed=42, config_overrides=cfg)
-        ate = calc_ate_summary(result.excess_table.daily_excess)
+        ate = calc_ate_summary(result.excess_table.obs_excess)
         total_ate = ate[ate["metric"] == "Total ATE"]["estimate"].values[0]
         assert total_ate > 0, f"[{model_name}] Expected large positive ATE, got {total_ate}"
 
@@ -707,8 +707,8 @@ class TestModelStatistical:
         cfg = _e2e_config(model_name, n_sim=50)
         result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                             seed=42, config_overrides=cfg)
-        ate = calc_ate_summary(result.excess_table.daily_excess)
-        mean_ate = ate[ate["metric"] == "Mean Daily ATE"]["estimate"].values[0]
+        ate = calc_ate_summary(result.excess_table.obs_excess)
+        mean_ate = ate[ate["metric"] == "Mean ATE per obs"]["estimate"].values[0]
         assert 3.0 < mean_ate < 20.0, (
             f"[{model_name}] Expected ATE near 10.0, got {mean_ate:.2f}")
 
@@ -722,8 +722,8 @@ class TestModelStatistical:
         cfg = _e2e_config(model_name, n_sim=50)
         result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                             seed=42, config_overrides=cfg)
-        ate = calc_ate_summary(result.excess_table.daily_excess)
-        mean_ate = ate[ate["metric"] == "Mean Daily ATE"]["estimate"].values[0]
+        ate = calc_ate_summary(result.excess_table.obs_excess)
+        mean_ate = ate[ate["metric"] == "Mean ATE per obs"]["estimate"].values[0]
         assert abs(mean_ate) < 8.0, (
             f"[{model_name}] Expected near-zero ATE, got {mean_ate:.2f}")
 
@@ -737,8 +737,8 @@ class TestModelStatistical:
         cfg = _e2e_config(model_name, n_sim=50)
         result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                             seed=42, config_overrides=cfg)
-        ate = calc_ate_summary(result.excess_table.daily_excess)
-        mean_ate = ate[ate["metric"] == "Mean Daily ATE"]["estimate"].values[0]
+        ate = calc_ate_summary(result.excess_table.obs_excess)
+        mean_ate = ate[ate["metric"] == "Mean ATE per obs"]["estimate"].values[0]
         assert -20.0 < mean_ate < 0.0, (
             f"[{model_name}] Expected negative ATE near -8.0, got {mean_ate:.2f}")
 
@@ -777,7 +777,7 @@ class TestModelComparison:
             cfg = _merge(_FAST, _e2e_config(model_name, test_days=90, holdout_days=90))
             result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                                 seed=42, config_overrides=cfg)
-            ate = calc_ate_summary(result.excess_table.daily_excess)
+            ate = calc_ate_summary(result.excess_table.obs_excess)
             total_ate = ate[ate["metric"] == "Total ATE"]["estimate"].values[0]
             assert total_ate > 0, (
                 f"[{model_name}] Expected positive total ATE, got {total_ate:.2f}")

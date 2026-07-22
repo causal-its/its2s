@@ -107,13 +107,20 @@ parallel:
   n_jobs: 1
 
 excess_periods: []
-# Example excess_periods:
+# Example excess_periods. Offsets are unit-explicit: delimit each period with
+# EITHER start_offset_days/end_offset_days (calendar days from the holdout
+# start, inclusive end) OR start_offset_obs/end_offset_obs (observation
+# counts into the holdout, inclusive end). Mixing the two families in one
+# period raises; the legacy start_offset/end_offset keys are rejected.
 # - name: "First 30 days"
-#   start_offset: 0
-#   end_offset: 30
+#   start_offset_days: 0
+#   end_offset_days: 30
+# - name: "First 4 observations"
+#   start_offset_obs: 0
+#   end_offset_obs: 3
 # - name: "Full holdout"
-#   start_offset: 0
-#   end_offset: null
+#   start_offset_obs: 0
+#   end_offset_obs: null
 
 tuning:
   split_method: percent

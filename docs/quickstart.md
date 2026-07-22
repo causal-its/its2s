@@ -93,7 +93,7 @@ Pass `output_dir` as a string or `pathlib.Path`; the directory is created if nee
 | `{model_name}_counterfactual.png` | Counterfactual plot |
 | `{model_name}_excess.csv` | Excess (observed vs counterfactual) table |
 | `{model_name}_metrics.csv` | Train/test error metrics |
-| `{model_name}_ate_summary.csv` | ATE-style summary (when daily excess is non-empty) |
+| `{model_name}_ate_summary.csv` | ATE-style summary (when the excess table is non-empty) |
 
 All paths sit under the single `output_dir` you provide.
 
