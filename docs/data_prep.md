@@ -47,6 +47,7 @@ Key configuration parameters (set in `params.yaml` or via `config_overrides`):
 | `periods.holdout_days` | 365 | Post-event projection window in calendar days (`split_method="days"`) |
 | `periods.test_obs` | none (required) | Pre-event test window in observations (`split_method="observations"`) |
 | `periods.holdout_obs` | none (required) | Post-event projection window in observations (`split_method="observations"`) |
+| `periods.min_test_obs` | 30 | Warn when the realized test window has fewer observations, whatever the split method; 0 disables |
 
 The percent-based default sizes the test window proportionally to the available
 pre-intervention data, so the pipeline runs without manual tuning on short series. Use
@@ -55,7 +56,10 @@ duration (e.g., a pre-registered analysis specifying a 365-day post-event window
 `split_method="observations"` when it must contain an exact number of observations
 (e.g., a 78-week test window on weekly data). The resulting train/test/holdout sizes
 are logged at run time as observation counts and percentages, so a mis-sized window is
-visible immediately.
+visible immediately. Independently of the split method, a warning fires when the
+realized test window ends up smaller than `periods.min_test_obs` (default 30): test
+metrics computed on very few points are unstable and can mislead model selection,
+regardless of how the small window arose.
 
 The test period is used only for model selection — it is never used to fit the final
 model. The final model is calibrated on the full pre-event dataset (training + test)

@@ -54,25 +54,28 @@ class CVResult:
 
 
 def time_series_cv(df, intervention_date, model_name="arima",
-                   n_folds=5, test_days=90, min_train_days=365,
-                   skip_days=0, cv_end_date=None,
-                   split_method="days",
+                   n_folds=5, test_obs=90, min_train_obs=365,
+                   skip_obs=0, cv_end_date=None,
+                   split_method="observations",
                    test_pct=0.10, min_train_pct=0.50, skip_pct=0.0,
                    date_col=None, target_col=None, covariate_cols=None,
                    config_path=None, config_overrides=None):
     """Evaluate a model using expanding-window time-series cross-validation.
 
-    Folds are non-overlapping by construction. Consecutive validation windows
-    are separated by `skip_days` (matching the R reference implementation's
-    `skip` parameter). The CV window can be capped at `cv_end_date` to prevent
-    tuning or evaluation folds from touching the held-out test period defined
-    by `run_single_its`.
+    All CV windows are sized in OBSERVATIONS (rows of the regular series),
+    never calendar days: fold boundaries are positional slices, so on a weekly
+    series ``test_obs=52`` spans one year. Calendar-day windows exist only in
+    ``prepare_splits``. Folds are non-overlapping by construction. Consecutive
+    validation windows are separated by ``skip_obs`` (matching the R reference
+    implementation's ``skip`` parameter). The CV window can be capped at
+    ``cv_end_date`` to prevent tuning or evaluation folds from touching the
+    held-out test period defined by ``run_single_its``.
 
-    Fold layout (train = expanding, test = fixed width):
+    Fold layout (train = expanding, test = fixed width, all in observations):
 
-        |------ min_train_days ------|-- test_days --|-- skip_days --|-- test_days --|...
-        fold 1: train [0, T0),         test [T0, T0+test_days)
-        fold 2: train [0, T0+test_days+skip_days), test [T0+test_days+skip_days, ...)
+        |------ min_train_obs ------|-- test_obs --|-- skip_obs --|-- test_obs --|...
+        fold 1: train [0, T0),        test [T0, T0+test_obs)
+        fold 2: train [0, T0+test_obs+skip_obs), test [T0+test_obs+skip_obs, ...)
         ...
 
     Parameters
@@ -85,18 +88,20 @@ def time_series_cv(df, intervention_date, model_name="arima",
         Model to evaluate.
     n_folds : int
         Maximum number of CV folds to attempt.
-    test_days : int
-        Length of each validation window in days.
-    min_train_days : int
-        Minimum training window for the first fold.
-    skip_days : int
-        Gap in days between the end of one validation window and the start of
-        the next. Set to 0 for adjacent non-overlapping folds. The R reference
-        uses skip = "12 months" (365 days for daily data).
+    test_obs : int
+        Length of each validation window in observations.
+    min_train_obs : int
+        Minimum training window for the first fold, in observations.
+    skip_obs : int
+        Gap in observations between the end of one validation window and the
+        start of the next. Set to 0 for adjacent non-overlapping folds. The R
+        reference uses skip = "12 months" (365 observations for daily data).
     cv_end_date : str or pd.Timestamp, optional
         Upper bound on the data used for CV. Must be <= intervention_date.
-        Use intervention_date - test_days to keep CV folds out of the
-        held-out evaluation window used by run_single_its.
+        To keep CV folds out of the held-out evaluation window used by
+        run_single_its, subtract a calendar span covering that window's
+        observations (its size times the series period; a resolved-units
+        safe default is tracked in GH #40).
         Defaults to intervention_date (all pre-intervention data).
     date_col : str, optional
         Date column name. Defaults to config value.
@@ -154,29 +159,36 @@ def time_series_cv(df, intervention_date, model_name="arima",
             raise ValueError(f"min_train_pct must be in (0, 1), got {min_train_pct}.")
         if skip_pct < 0 or skip_pct >= 1:
             raise ValueError(f"skip_pct must be in [0, 1), got {skip_pct}.")
-        test_days = max(1, int(round(test_pct * n_cv)))
-        min_train_days = max(1, int(round(min_train_pct * n_cv)))
-        skip_days = max(0, int(round(skip_pct * n_cv)))
-    elif split_method != "days":
+        test_obs = max(1, int(round(test_pct * n_cv)))
+        min_train_obs = max(1, int(round(min_train_pct * n_cv)))
+        skip_obs = max(0, int(round(skip_pct * n_cv)))
+    elif split_method == "days":
         raise ValueError(
-            f"split_method must be 'percent' or 'days', got {split_method!r}."
+            "CV windows are observation counts; use split_method="
+            "'observations' with test_obs/min_train_obs/skip_obs. "
+            "Calendar-day windows exist only in prepare_splits."
+        )
+    elif split_method != "observations":
+        raise ValueError(
+            f"split_method must be 'percent' or 'observations', "
+            f"got {split_method!r}."
         )
 
-    if n_cv < min_train_days + test_days:
+    if n_cv < min_train_obs + test_obs:
         raise ValueError(
             f"Not enough pre-intervention data for CV. Need at least "
-            f"{min_train_days + test_days} rows, have {n_cv}."
+            f"{min_train_obs + test_obs} rows, have {n_cv}."
         )
 
     model_params = get_model_config(config, model_name)
     fold_results = []
 
     # Non-overlapping fold layout: each fold's test window starts at
-    # min_train_days + i * (test_days + skip_days), guaranteeing a gap of
-    # skip_days between the end of fold i and the start of fold i+1.
+    # min_train_obs + i * (test_obs + skip_obs), guaranteeing a gap of
+    # skip_obs between the end of fold i and the start of fold i+1.
     for i in range(n_folds):
-        test_start_idx = min_train_days + i * (test_days + skip_days)
-        test_end_idx = test_start_idx + test_days
+        test_start_idx = min_train_obs + i * (test_obs + skip_obs)
+        test_end_idx = test_start_idx + test_obs
 
         if test_end_idx > n_cv:
             break

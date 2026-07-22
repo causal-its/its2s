@@ -23,7 +23,7 @@ from its2s.tuning import (
 
 @pytest.fixture
 def short_daily_series():
-    """Synthetic daily series with enough data for 2-fold CV (min_train_days=400)."""
+    """Synthetic daily series with enough data for 2-fold CV (min_train_obs=400)."""
     rng = np.random.default_rng(0)
     n = 900
     dates = pd.date_range("2018-01-01", periods=n, freq="D")
@@ -135,8 +135,8 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            test_obs=60,
+            min_train_obs=400,
             n_jobs=1,
             seed=0,
         )
@@ -149,8 +149,8 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            test_obs=60,
+            min_train_obs=400,
             n_jobs=1,
             seed=0,
         )
@@ -168,8 +168,8 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            test_obs=60,
+            min_train_obs=400,
             n_jobs=1,
             seed=0,
         )
@@ -182,8 +182,8 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            test_obs=60,
+            min_train_obs=400,
             n_jobs=1,
             seed=0,
         )
@@ -198,8 +198,8 @@ class TestTuneModel:
             model_name="prophet_xgb",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            test_obs=60,
+            min_train_obs=400,
             n_jobs=1,
             seed=0,
         )
@@ -215,8 +215,8 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            test_obs=60,
+            min_train_obs=400,
             metric="mae",
             n_jobs=1,
             seed=0,
@@ -239,8 +239,8 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            test_obs=60,
+            min_train_obs=400,
             n_jobs=1,
             seed=0,
         )
@@ -255,8 +255,8 @@ class TestTuneModel:
                 model_name="not_a_model",
                 n_trials=2,
                 n_folds=2,
-                test_days=60,
-                min_train_days=400,
+                test_obs=60,
+                min_train_obs=400,
             )
 
     def test_invalid_metric_raises(self, short_daily_series):
@@ -267,8 +267,8 @@ class TestTuneModel:
                 model_name="arima",
                 n_trials=2,
                 n_folds=2,
-                test_days=60,
-                min_train_days=400,
+                test_obs=60,
+                min_train_obs=400,
                 metric="mape",
             )
 
@@ -279,8 +279,8 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            test_obs=60,
+            min_train_obs=400,
             seed=77,
         )
         assert result.model_name == "arima"
@@ -319,8 +319,8 @@ class TestTuningConfig:
         cfg = load_config()
         assert "tuning" in cfg
         assert cfg["tuning"]["n_folds"] == 5
-        assert cfg["tuning"]["test_days"] == 365
-        assert cfg["tuning"]["min_train_days"] == 730
+        assert cfg["tuning"]["test_obs"] == 365
+        assert cfg["tuning"]["min_train_obs"] == 730
         assert cfg["tuning"]["metric"] == "rmse"
 
     def test_get_tuning_config(self):
@@ -337,3 +337,12 @@ class TestTuningConfig:
         tc["n_folds"] = 999
         cfg2 = load_config()
         assert cfg2["tuning"]["n_folds"] == 5  # original unaffected
+
+    def test_legacy_day_keys_raise(self):
+        # CV windows are observation counts (GH #39); day-named tuning keys
+        # raise instead of being silently reinterpreted.
+        from its2s.settings import get_tuning_config, load_config
+        cfg = load_config()
+        cfg["tuning"]["min_train_days"] = 730
+        with pytest.raises(ValueError, match="min_train_days"):
+            get_tuning_config(cfg)

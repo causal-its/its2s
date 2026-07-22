@@ -297,6 +297,7 @@ def run_single_its(
         intervention_date,
         date_col=date_col,
         split_method=split_method_resolved,
+        min_test_obs=periods_cfg.get("min_test_obs", 30),
         **split_kwargs,
     )
 

@@ -146,3 +146,29 @@ def test_validate_observations_empty_train_raises():
         validate_inputs(df, intv, "ds", "y", None, "prophet_xgb",
                         split_method="observations", test_obs=100,
                         holdout_obs=50)
+
+
+def test_min_test_obs_warns_on_small_window():
+    """Issue #29: a degenerate test window warns whatever its cause."""
+    df, intv = _make_series(n_pre=100, n_post=50)
+    with pytest.warns(UserWarning, match="min_test_obs"):
+        prepare_splits(df, intv, split_method="percent",
+                       test_pct=0.10)  # 10 obs < default threshold 30
+
+
+def test_min_test_obs_silent_at_threshold():
+    import warnings
+    df, intv = _make_series(n_pre=150, n_post=50)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        prepare_splits(df, intv, split_method="percent",
+                       test_pct=0.20)  # exactly 30 obs, no warning
+
+
+def test_min_test_obs_zero_disables():
+    import warnings
+    df, intv = _make_series(n_pre=100, n_post=50)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        prepare_splits(df, intv, split_method="percent",
+                       test_pct=0.10, min_test_obs=0)

@@ -867,7 +867,7 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv, CVResult
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=600)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
+                                n_folds=3, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         assert isinstance(result, CVResult)
 
@@ -875,7 +875,7 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=601)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
+                                n_folds=3, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         assert result.model_name == "arima"
 
@@ -883,7 +883,7 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=602)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
+                                n_folds=3, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         assert len(result.folds) <= 3
         assert len(result.folds) >= 1
@@ -892,7 +892,7 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=603)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
+                                n_folds=3, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         assert np.isfinite(result.mean_rmse)
         assert result.mean_rmse > 0
@@ -901,7 +901,7 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=604)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
+                                n_folds=3, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         train_sizes = [f.n_train for f in result.folds]
         assert train_sizes == sorted(train_sizes)
@@ -910,7 +910,7 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=605)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=2, test_days=60, min_train_days=180,
+                                n_folds=2, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         s = result.summary()
         assert isinstance(s, str)
@@ -922,14 +922,24 @@ class TestCrossValidation:
         df, intv, _ = make_short_series(n_pre=30, n_post=10, seed=606)
         with pytest.raises(ValueError, match="Not enough"):
             time_series_cv(df, intv, model_name="arima",
-                           n_folds=3, test_days=60, min_train_days=365,
+                           n_folds=3, test_obs=60, min_train_obs=365,
+                           config_overrides=self._CV_CFG)
+
+    def test_split_method_days_raises(self):
+        # CV windows are observation counts; "days" exists only in
+        # prepare_splits (GH #39).
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=619)
+        with pytest.raises(ValueError, match="observation counts"):
+            time_series_cv(df, intv, model_name="arima",
+                           split_method="days",
                            config_overrides=self._CV_CFG)
 
     def test_fold_result_fields(self):
         from its2s.cross_validation import time_series_cv, CVFoldResult
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=607)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=2, test_days=60, min_train_days=180,
+                                n_folds=2, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         for fold in result.folds:
             assert isinstance(fold, CVFoldResult)
@@ -937,15 +947,15 @@ class TestCrossValidation:
             assert fold.n_test > 0
             assert fold.train_end < fold.test_start
 
-    # --- skip_days: non-overlapping fold windows ---
+    # --- skip_obs: non-overlapping fold windows ---
 
-    def test_skip_days_zero_folds_are_adjacent(self):
-        # With skip_days=0, fold i+1 test starts exactly where fold i test ends.
+    def test_skip_obs_zero_folds_are_adjacent(self):
+        # With skip_obs=0, fold i+1 test starts exactly where fold i test ends.
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=610)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
-                                skip_days=0, config_overrides=self._CV_CFG)
+                                n_folds=3, test_obs=60, min_train_obs=180,
+                                skip_obs=0, config_overrides=self._CV_CFG)
         for i in range(len(result.folds) - 1):
             gap = (result.folds[i + 1].test_start
                    - result.folds[i].test_end).days
@@ -953,28 +963,28 @@ class TestCrossValidation:
             # start of next is the following day) or 0 if timestamps coincide.
             assert gap <= 1, f"Folds {i} and {i+1} have unexpected gap {gap}"
 
-    def test_skip_days_nonzero_enforces_gap(self):
+    def test_skip_obs_nonzero_enforces_gap(self):
         from its2s.cross_validation import time_series_cv
         skip = 30
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=611)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
-                                skip_days=skip, config_overrides=self._CV_CFG)
+                                n_folds=3, test_obs=60, min_train_obs=180,
+                                skip_obs=skip, config_overrides=self._CV_CFG)
         for i in range(len(result.folds) - 1):
             gap = (result.folds[i + 1].test_start
                    - result.folds[i].test_end).days
             assert gap >= skip - 1, (
                 f"Gap between folds {i} and {i+1} ({gap} days) "
-                f"should be >= skip_days ({skip})"
+                f"should be >= skip_obs ({skip})"
             )
 
-    def test_skip_days_folds_never_overlap(self):
+    def test_skip_obs_folds_never_overlap(self):
         # No two fold test windows should share any dates.
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=612)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=4, test_days=60, min_train_days=180,
-                                skip_days=0, config_overrides=self._CV_CFG)
+                                n_folds=4, test_obs=60, min_train_obs=180,
+                                skip_obs=0, config_overrides=self._CV_CFG)
         for i in range(len(result.folds) - 1):
             assert result.folds[i].test_end < result.folds[i + 1].test_start, (
                 f"Fold {i} test end ({result.folds[i].test_end}) "
@@ -989,7 +999,7 @@ class TestCrossValidation:
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=613)
         cv_end = intv - pd.Timedelta(days=90)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
+                                n_folds=3, test_obs=60, min_train_obs=180,
                                 cv_end_date=cv_end,
                                 config_overrides=self._CV_CFG)
         for fold in result.folds:
@@ -1002,7 +1012,7 @@ class TestCrossValidation:
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=614)
         with pytest.raises(ValueError, match="cv_end_date"):
             time_series_cv(df, intv, model_name="arima",
-                           n_folds=2, test_days=60, min_train_days=180,
+                           n_folds=2, test_obs=60, min_train_obs=180,
                            cv_end_date=intv + pd.Timedelta(days=10),
                            config_overrides=self._CV_CFG)
 
@@ -1012,10 +1022,10 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=615)
         r1 = time_series_cv(df, intv, model_name="arima",
-                            n_folds=2, test_days=60, min_train_days=180,
+                            n_folds=2, test_obs=60, min_train_obs=180,
                             cv_end_date=None, config_overrides=self._CV_CFG)
         r2 = time_series_cv(df, intv, model_name="arima",
-                            n_folds=2, test_days=60, min_train_days=180,
+                            n_folds=2, test_obs=60, min_train_obs=180,
                             cv_end_date=intv, config_overrides=self._CV_CFG)
         assert len(r1.folds) == len(r2.folds)
         assert abs(r1.mean_rmse - r2.mean_rmse) < 1e-9

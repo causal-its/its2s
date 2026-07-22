@@ -3,6 +3,7 @@
 # Dependencies: pandas
 
 import logging
+import warnings
 from dataclasses import dataclass
 
 import pandas as pd
@@ -33,7 +34,8 @@ def prepare_splits(df, intervention_date, date_col="ds",
                    split_method="percent",
                    test_pct=None, holdout_pct=None,
                    test_days=None, holdout_days=None,
-                   test_obs=None, holdout_obs=None):
+                   test_obs=None, holdout_obs=None,
+                   min_test_obs=30):
     """Split a time series DataFrame into train, test, and holdout periods.
 
     Window units are explicit per method. "percent" and "observations" size
@@ -76,6 +78,11 @@ def prepare_splits(df, intervention_date, date_col="ds",
         Number of observations from the intervention onward used as the
         holdout window. Required with ``split_method="observations"``; no
         default.
+    min_test_obs : int
+        Warn when the realized test window has fewer observations than this,
+        whatever the split method (GH #29). Applies to every method; set to 0
+        to disable. Defaults to 30, a conservative floor below which test
+        metrics such as MAPE are unstable and can mislead model selection.
 
     Returns
     -------
@@ -156,6 +163,19 @@ def prepare_splits(df, intervention_date, date_col="ds",
         100 * len(holdout_df) / n_post if n_post else float("nan"),
         n_post,
     )
+
+    # Guardrail against silently degenerate test windows, whatever their
+    # cause -- unit confusion, short pre-event series, etc. (GH #29).
+    if 0 < len(test_df) < min_test_obs:
+        warnings.warn(
+            f"Test window has only {len(test_df)} observations "
+            f"(< min_test_obs={min_test_obs}). Test metrics such as MAPE are "
+            "unstable on so few points and can mislead model selection and "
+            "interval calibration. Check the split settings, or set "
+            "min_test_obs=0 to silence this warning.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     return TimeSeriesSplits(
         train_df=train_df,

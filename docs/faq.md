@@ -129,8 +129,8 @@ Yes, but configuration adjustments are required:
 
 There is no hard minimum, but the series must be long enough to:
 
-1. Support the cross-validation framework (`min_train_days` + at least one fold of
-   `test_days` + `skip_days`).
+1. Support the cross-validation framework (`min_train_obs` + at least one fold of
+   `test_obs` + `skip_obs` -- all observation counts, not calendar days).
 2. Provide a reliable test window (default 20% of pre-intervention observations) for
    model selection.
 

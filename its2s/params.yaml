@@ -25,6 +25,7 @@ periods:
   holdout_days: 365           # used when split_method=days (calendar days, whatever the series frequency)
   # test_obs: 52              # used when split_method=observations (row counts; required, no defaults)
   # holdout_obs: 52
+  min_test_obs: 30            # warn when the realized test window has fewer observations (0 disables); GH #29
 
 models:
   prophet_xgb:
@@ -128,9 +129,11 @@ tuning:
   test_pct: 0.10              # CV fold test window = 10% of pre-intervention
   min_train_pct: 0.50         # initial training = 50% of pre-intervention
   skip_pct: 0.0               # gap between folds (0% = back-to-back)
-  test_days: 365              # used when split_method=days
-  min_train_days: 730
-  skip_days: 0
+  # CV windows are observation counts, never calendar days (GH #39); the
+  # values below equal calendar days only on daily data.
+  test_obs: 365               # used when split_method=observations
+  min_train_obs: 730
+  skip_obs: 0
   metric: "rmse"
   n_jobs: 1
   seed: 42

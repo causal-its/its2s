@@ -69,8 +69,10 @@ def get_model_config(config, model_name):
 def get_tuning_config(config):
     """Extract the tuning defaults section.
 
-    Fills in sensible defaults for percent-based and day-based CV controls so
-    callers (e.g. tune_model) can read either path uniformly.
+    Fills in sensible defaults for percent-based and observation-based CV
+    controls so callers (e.g. tune_model) can read either path uniformly.
+    Legacy day-named keys raise: CV windows are observation counts (GH #39),
+    and silently reinterpreting old keys is the failure mode GH #28 showed.
 
     Parameters
     ----------
@@ -81,6 +83,14 @@ def get_tuning_config(config):
     dict
     """
     tuning = copy.deepcopy(config.get("tuning", {}))
+    legacy = [k for k in ("test_days", "min_train_days", "skip_days")
+              if k in tuning]
+    if legacy:
+        raise ValueError(
+            f"Legacy tuning keys {legacy} are no longer supported. CV windows "
+            "are observation counts: use test_obs/min_train_obs/skip_obs with "
+            "split_method 'observations'."
+        )
     tuning.setdefault("split_method", "percent")
     tuning.setdefault("n_folds", 5)
     tuning.setdefault("metric", "rmse")
@@ -91,7 +101,7 @@ def get_tuning_config(config):
         tuning.setdefault("min_train_pct", 0.50)
         tuning.setdefault("skip_pct", 0.0)
     else:
-        tuning.setdefault("test_days", 365)
-        tuning.setdefault("min_train_days", 730)
-        tuning.setdefault("skip_days", 0)
+        tuning.setdefault("test_obs", 365)
+        tuning.setdefault("min_train_obs", 730)
+        tuning.setdefault("skip_obs", 0)
     return tuning

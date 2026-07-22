@@ -215,9 +215,9 @@ def tune_model(
     model_name: str,
     n_trials: int | None = None,
     n_folds: int = 5,
-    test_days: int = 365,
-    min_train_days: int = 730,
-    skip_days: int = 0,
+    test_obs: int = 365,
+    min_train_obs: int = 730,
+    skip_obs: int = 0,
     cv_end_date=None,
     split_method: str = "percent",
     test_pct: float = 0.10,
@@ -234,12 +234,17 @@ def tune_model(
     sample of the parameter space is evaluated via expanding-window CV, and the
     combination with the lowest mean CV RMSE (or MAE) is selected.
 
-    R reference CV settings: 5 folds, 12-month validation window, 2-year initial
-    training window, 12-month skip between folds. Matching those settings:
-        n_folds=5, test_days=365, min_train_days=730, skip_days=365
+    All CV windows are sized in OBSERVATIONS (rows), never calendar days --
+    see time_series_cv. The R reference CV settings are 5 folds, 12-month
+    validation window, 2-year initial training window, 12-month skip between
+    folds; on DAILY data those translate to:
+        n_folds=5, test_obs=365, min_train_obs=730, skip_obs=365
+    (on any other frequency, convert months to observation counts first).
 
     To prevent tuning from seeing the held-out evaluation window that
-    run_single_its uses, set cv_end_date to intervention_date minus test_days.
+    run_single_its uses, set cv_end_date to intervention_date minus a calendar
+    span covering that window's observations (its size times the series
+    period; a resolved-units safe default is tracked in GH #40).
 
     Parameters
     ----------
@@ -254,17 +259,18 @@ def tune_model(
         values matching R reference (100 for most models, 75 for neuralprophet).
     n_folds : int
         Number of expanding-window CV folds.
-    test_days : int
-        Validation window per fold in days.
-    min_train_days : int
-        Minimum training window for the first fold in days.
-    skip_days : int
-        Gap in days between consecutive fold validation windows. Set to 365 to
-        match the R reference (skip = "12 months"). Defaults to 0 (adjacent folds).
+    test_obs : int
+        Validation window per fold in observations.
+    min_train_obs : int
+        Minimum training window for the first fold, in observations.
+    skip_obs : int
+        Gap in observations between consecutive fold validation windows. Set
+        to 365 on daily data to match the R reference (skip = "12 months").
+        Defaults to 0 (adjacent folds).
     cv_end_date : str or pd.Timestamp, optional
         Upper bound on data used for CV folds. Must be <= intervention_date.
-        Pass intervention_date - pd.Timedelta(days=test_days) to prevent tuning
-        folds from overlapping with the held-out evaluation window.
+        Pass a timestamp early enough that tuning folds cannot overlap the
+        held-out evaluation window (see the leakage note above).
         Defaults to None (use all pre-intervention data).
     metric : str
         Objective for selecting the best parameter set. "rmse" or "mae".
@@ -284,13 +290,15 @@ def tune_model(
 
     Examples
     --------
-    Tune and apply best params (R-matched CV settings, leakage-free):
+    Tune and apply best params on a DAILY series (R-matched CV settings,
+    leakage-free; 365 observations = 365 calendar days only because the
+    series is daily):
 
         import pandas as pd
         result = tune_model(
             df, "2025-01-07", "prophet_xgb",
             n_trials=100, n_folds=5,
-            test_days=365, min_train_days=730, skip_days=365,
+            test_obs=365, min_train_obs=730, skip_obs=365,
             cv_end_date=pd.Timestamp("2025-01-07") - pd.Timedelta(days=365),
         )
         run_single_its(
@@ -317,8 +325,8 @@ def tune_model(
             f"n_folds must be >= 2, got {n_folds}. "
             "At least 2 folds are required for meaningful cross-validation."
         )
-    if split_method == "days" and test_days < 1:
-        raise ValueError(f"test_days must be >= 1, got {test_days}.")
+    if split_method == "observations" and test_obs < 1:
+        raise ValueError(f"test_obs must be >= 1, got {test_obs}.")
     search_space = _SEARCH_SPACES[model_name]
 
     flat_trials = _sample_lhs(search_space, n_trials, seed)
@@ -326,9 +334,9 @@ def tune_model(
 
     cv_kwargs = {
         "n_folds":        n_folds,
-        "test_days":      test_days,
-        "min_train_days": min_train_days,
-        "skip_days":      skip_days,
+        "test_obs":       test_obs,
+        "min_train_obs":  min_train_obs,
+        "skip_obs":       skip_obs,
         "cv_end_date":    cv_end_date,
         "split_method":   split_method,
         "test_pct":       test_pct,
