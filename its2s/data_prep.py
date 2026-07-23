@@ -30,6 +30,48 @@ class TimeSeriesSplits:
     intervention_date: pd.Timestamp
 
 
+def resolve_split_config(periods_cfg, split_method=None):
+    """Resolve (split_method, split_kwargs) from a config "periods" section.
+
+    Only the arguments belonging to the resolved method are read and passed
+    on: prepare_splits raises on cross-method arguments (GH #28, #54). The
+    ``split_method`` argument overrides the config key. ``periods_cfg`` is
+    never mutated.
+
+    Parameters
+    ----------
+    periods_cfg : dict
+        The "periods" section of a loaded config.
+    split_method : str, optional
+        Override for ``periods_cfg["split_method"]``.
+
+    Returns
+    -------
+    tuple[str, dict]
+        The resolved split method and the keyword arguments to pass to
+        ``prepare_splits`` for that method.
+    """
+    method = (split_method if split_method is not None
+              else periods_cfg.get("split_method", "percent"))
+    if method == "days":
+        split_kwargs = {
+            "test_days": periods_cfg.get("test_days", 365),
+            "holdout_days": periods_cfg.get("holdout_days", 365),
+        }
+    elif method == "observations":
+        split_kwargs = {
+            "test_obs": periods_cfg.get("test_obs"),
+            "holdout_obs": periods_cfg.get("holdout_obs"),
+        }
+    else:
+        # "percent" is the default; an unknown method raises in prepare_splits.
+        split_kwargs = {
+            "test_pct": periods_cfg.get("test_pct", 0.20),
+            "holdout_pct": periods_cfg.get("holdout_pct", 1.0),
+        }
+    return method, split_kwargs
+
+
 def prepare_splits(df, intervention_date, date_col="ds",
                    split_method="percent",
                    test_pct=None, holdout_pct=None,

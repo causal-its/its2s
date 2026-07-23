@@ -12,7 +12,9 @@ import pandas as pd
 from joblib import Parallel, delayed
 from scipy.stats import qmc
 
-from .cross_validation import _CV_METHOD_ARGS, time_series_cv
+from .cross_validation import (_CV_METHOD_ARGS, _default_cv_end_date,
+                               time_series_cv)
+from .settings import _deep_merge, load_config
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +108,9 @@ class TuningResult:
         Objective used for selection (``"rmse"`` or ``"mae"``).
     seed : int
         Random seed driving the Latin hypercube sample.
+    cv_end_date : pd.Timestamp or None
+        Effective CV cap used for every trial; derived from the run's
+        held-out test split when not passed explicitly (GH #40).
     """
 
     model_name: str
@@ -117,6 +122,7 @@ class TuningResult:
     n_folds: int
     metric: str
     seed: int
+    cv_end_date: pd.Timestamp | None = None
 
 
 def _sample_lhs(search_space: dict, n_trials: int, seed: int) -> list[dict]:
@@ -173,11 +179,14 @@ def _evaluate_trial(
     model_name: str,
     params: dict,
     cv_kwargs: dict,
+    user_overrides: dict | None = None,
 ) -> dict:
     """Run time_series_cv for one parameter combination and return metric dict.
 
     Returns a dict with inf values (not an exception) if the trial fails,
     so a single unstable parameter set cannot abort the full search.
+    Trial params are merged on top of any user config_overrides, so the
+    sampled values always win over user model overrides.
     """
     try:
         with warnings.catch_warnings():
@@ -186,7 +195,8 @@ def _evaluate_trial(
                 df=df,
                 intervention_date=intervention_date,
                 model_name=model_name,
-                config_overrides={"models": {model_name: params}},
+                config_overrides=_deep_merge(
+                    user_overrides or {}, {"models": {model_name: params}}),
                 **cv_kwargs,
             )
         return {
@@ -225,6 +235,7 @@ def tune_model(
     skip_pct: float | None = None,
     metric: str = "rmse",
     config_path=None,
+    config_overrides: dict | None = None,
     n_jobs: int = 1,
     seed: int = 42,
 ) -> TuningResult:
@@ -246,10 +257,12 @@ def tune_model(
     passed; arguments for the other method raise ValueError rather than being
     silently ignored.
 
-    To prevent tuning from seeing the held-out evaluation window that
-    run_single_its uses, set cv_end_date to intervention_date minus a calendar
-    span covering that window's observations (its size times the series
-    period; a resolved-units safe default is tracked in GH #40).
+    By default, tuning folds are capped at the start of the held-out test
+    window that run_single_its will evaluate on, derived row-exactly from the
+    config's "periods" section (GH #40). Pass the same config_path /
+    config_overrides you will run with so the derived boundary matches the
+    run; pass cv_end_date=intervention_date to deliberately tune on all
+    pre-intervention data.
 
     Parameters
     ----------
@@ -291,13 +304,24 @@ def tune_model(
         0.0. Only with ``split_method="percent"``.
     cv_end_date : str or pd.Timestamp, optional
         Upper bound on data used for CV folds. Must be <= intervention_date.
-        Pass a timestamp early enough that tuning folds cannot overlap the
-        held-out evaluation window (see the leakage note above).
-        Defaults to None (use all pre-intervention data).
+        Defaults to the first date of the held-out test window that
+        prepare_splits produces for this df and the loaded config's
+        "periods" section, so tuning folds never touch the window
+        run_single_its evaluates on (GH #40). The derivation is row-exact
+        for every split method and series frequency; tune on the same
+        missing-handled DataFrame and periods config you will run with.
+        Pass cv_end_date=intervention_date explicitly to tune on all
+        pre-intervention data.
     metric : str
         Objective for selecting the best parameter set. "rmse" or "mae".
     config_path : str or Path, optional
         Path to a custom base YAML config (merged before tuning overrides).
+    config_overrides : dict, optional
+        Runtime config overrides, as in run_single_its. Pass the same
+        overrides here that the run will use -- in particular any "periods"
+        override -- so the derived cv_end_date matches the run's actual
+        test window. Per-trial model params are merged on top and always
+        win over model overrides given here.
     n_jobs : int
         Parallel workers for evaluating trials. -1 uses all available cores.
     seed : int
@@ -312,22 +336,26 @@ def tune_model(
 
     Examples
     --------
-    Tune and apply best params on a DAILY series (R-matched CV settings,
-    leakage-free; 365 observations = 365 calendar days only because the
-    series is daily):
+    Tune and apply best params on a DAILY series (R-matched CV settings;
+    365 observations = 365 calendar days only because the series is daily).
+    Tuning folds stop before the run's held-out test window by default;
+    passing the same periods override to both calls keeps the derived
+    boundary and the run's actual window identical:
 
-        import pandas as pd
+        overrides = {"periods": {"split_method": "days",
+                                 "test_days": 365, "holdout_days": 365}}
         result = tune_model(
             df, "2025-01-07", "prophet_xgb",
             n_trials=100, n_folds=5,
             split_method="observations",
             test_obs=365, min_train_obs=730, skip_obs=365,
-            cv_end_date=pd.Timestamp("2025-01-07") - pd.Timedelta(days=365),
+            config_overrides=overrides,
         )
         run_single_its(
             df, "2025-01-07",
             model_name="prophet_xgb",
-            config_overrides={"models": {"prophet_xgb": result.best_params}},
+            config_overrides={"models": {"prophet_xgb": result.best_params},
+                              **overrides},
         )
     """
     if model_name not in _SEARCH_SPACES:
@@ -374,6 +402,22 @@ def tune_model(
             "At least 2 folds are required for meaningful cross-validation."
         )
 
+    # Resolve the CV cap once, upfront, so every trial sees the same concrete
+    # date and an invalid explicit value raises here rather than being
+    # swallowed into inf metrics by _evaluate_trial (GH #40).
+    intervention_ts = pd.Timestamp(intervention_date)
+    if cv_end_date is not None:
+        cv_end_date = pd.Timestamp(cv_end_date)
+        if cv_end_date > intervention_ts:
+            raise ValueError(
+                f"cv_end_date ({cv_end_date.date()}) must be <= "
+                f"intervention_date ({intervention_ts.date()})."
+            )
+    else:
+        config = load_config(config_path, config_overrides)
+        cv_end_date = _default_cv_end_date(
+            df, intervention_date, config["data"]["date_col"], config)
+
     cv_kwargs = {
         "n_folds":        n_folds,
         "cv_end_date":    cv_end_date,
@@ -406,7 +450,8 @@ def tune_model(
     )
 
     results = Parallel(n_jobs=n_jobs)(
-        delayed(_evaluate_trial)(df, intervention_date, model_name, params, cv_kwargs)
+        delayed(_evaluate_trial)(df, intervention_date, model_name, params,
+                                 cv_kwargs, config_overrides)
         for params in nested_trials
     )
 
@@ -441,4 +486,5 @@ def tune_model(
         n_folds=n_folds,
         metric=metric,
         seed=seed,
+        cv_end_date=cv_end_date,
     )

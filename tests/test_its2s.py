@@ -1038,19 +1038,129 @@ class TestCrossValidation:
                            cv_end_date=intv + pd.Timedelta(days=10),
                            config_overrides=self._CV_CFG)
 
-    def test_cv_end_date_none_uses_intervention_date(self):
-        # Default (cv_end_date=None) should behave identically to passing
-        # cv_end_date=intervention_date.
+    def test_cv_end_date_none_derives_test_boundary(self):
+        # Default (cv_end_date=None) derives the start of the held-out test
+        # window from the run's split config (GH #40): identical to passing
+        # that boundary explicitly, and NOT identical to using all
+        # pre-intervention data.
         from its2s.cross_validation import time_series_cv
-        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=615)
-        r1 = time_series_cv(df, intv, model_name="arima",
-                            n_folds=2, test_obs=60, min_train_obs=180,
-                            cv_end_date=None, config_overrides=self._CV_CFG)
-        r2 = time_series_cv(df, intv, model_name="arima",
-                            n_folds=2, test_obs=60, min_train_obs=180,
-                            cv_end_date=intv, config_overrides=self._CV_CFG)
-        assert len(r1.folds) == len(r2.folds)
-        assert abs(r1.mean_rmse - r2.mean_rmse) < 1e-9
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_daily_series(n_pre=300, n_post=90, seed=615)
+        boundary = prepare_splits(df, intv).test_df["ds"].min()
+        r_none = time_series_cv(df, intv, model_name="arima",
+                                n_folds=2, test_obs=60, min_train_obs=180,
+                                cv_end_date=None,
+                                config_overrides=self._CV_CFG)
+        r_boundary = time_series_cv(df, intv, model_name="arima",
+                                    n_folds=2, test_obs=60, min_train_obs=180,
+                                    cv_end_date=boundary,
+                                    config_overrides=self._CV_CFG)
+        r_all_pre = time_series_cv(df, intv, model_name="arima",
+                                   n_folds=2, test_obs=60, min_train_obs=180,
+                                   cv_end_date=intv,
+                                   config_overrides=self._CV_CFG)
+        assert r_none.cv_end_date == boundary
+        assert len(r_none.folds) == len(r_boundary.folds)
+        assert abs(r_none.mean_rmse - r_boundary.mean_rmse) < 1e-9
+        assert len(r_all_pre.folds) > len(r_none.folds)
+
+    def test_cv_default_excludes_run_test_window(self):
+        # With everything at defaults, no CV fold may touch the window
+        # prepare_splits reserves for run_single_its evaluation (GH #40).
+        from its2s.cross_validation import time_series_cv
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_daily_series(n_pre=300, n_post=90, seed=616)
+        boundary = prepare_splits(df, intv).test_df["ds"].min()
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=2, test_obs=60, min_train_obs=180,
+                                config_overrides=self._CV_CFG)
+        for fold in result.folds:
+            assert fold.test_end < boundary, (
+                f"Fold test_end {fold.test_end} reached the run's held-out "
+                f"test window starting {boundary}"
+            )
+
+    def test_cv_default_weekly_row_exact(self):
+        # On a weekly grid the derived cap equals the run's test boundary
+        # (row-exact) and DIFFERS from the naive calendar back-off
+        # intervention - Timedelta(days=n_test) that GH #40 retired.
+        from its2s.cross_validation import time_series_cv
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_weekly_series(n_pre_weeks=156, n_post_weeks=26,
+                                         seed=617)
+        splits = prepare_splits(df, intv)
+        boundary = splits.test_df["ds"].min()
+        n_test = len(splits.test_df)
+        assert boundary != intv - pd.Timedelta(days=n_test)
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=2, test_obs=20, min_train_obs=60,
+                                config_overrides=self._CV_CFG)
+        assert result.cv_end_date == boundary
+        for fold in result.folds:
+            assert fold.test_end < boundary
+
+    def test_cv_default_days_method_config(self):
+        # A days-method periods config drives the derivation row-exactly on
+        # a weekly grid: the cap is the first row of the calendar window.
+        from its2s.cross_validation import time_series_cv
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_weekly_series(n_pre_weeks=156, n_post_weeks=26,
+                                         seed=618)
+        overrides = dict(self._CV_CFG)
+        overrides["periods"] = {"split_method": "days",
+                                "test_days": 180, "holdout_days": 60}
+        boundary = prepare_splits(df, intv, split_method="days",
+                                  test_days=180, holdout_days=60,
+                                  min_test_obs=0).test_df["ds"].min()
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=2, test_obs=20, min_train_obs=60,
+                                config_overrides=overrides)
+        assert result.cv_end_date == boundary
+        for fold in result.folds:
+            assert fold.test_end < boundary
+
+    def test_cv_end_date_explicit_intervention_reproduces_old_behavior(self):
+        # The escape hatch: cv_end_date=intervention_date uses all
+        # pre-intervention data, so a fold CAN land inside the run's
+        # held-out test window (the pre-GH-#40 layout).
+        from its2s.cross_validation import time_series_cv
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_daily_series(n_pre=300, n_post=90, seed=619)
+        boundary = prepare_splits(df, intv).test_df["ds"].min()
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=2, test_obs=60, min_train_obs=180,
+                                cv_end_date=intv,
+                                config_overrides=self._CV_CFG)
+        assert max(f.test_end for f in result.folds) >= boundary
+
+    def test_cv_result_records_effective_cv_end_date(self):
+        # CVResult carries the effective cap for both paths.
+        from its2s.cross_validation import time_series_cv
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_daily_series(n_pre=300, n_post=90, seed=621)
+        r_derived = time_series_cv(df, intv, model_name="arima",
+                                   n_folds=2, test_obs=60, min_train_obs=180,
+                                   config_overrides=self._CV_CFG)
+        assert (r_derived.cv_end_date
+                == prepare_splits(df, intv).test_df["ds"].min())
+        explicit = intv - pd.Timedelta(days=90)
+        r_explicit = time_series_cv(df, intv, model_name="arima",
+                                    n_folds=2, test_obs=60,
+                                    min_train_obs=120,
+                                    cv_end_date=explicit,
+                                    config_overrides=self._CV_CFG)
+        assert r_explicit.cv_end_date == explicit
+
+    def test_insufficient_data_error_names_cv_end_date(self):
+        # Fixed observation windows that fit the full pre period but not
+        # the capped frame raise, and the message names the cap and the
+        # escape hatch.
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=300, n_post=90, seed=622)
+        with pytest.raises(ValueError, match="cv_end_date"):
+            time_series_cv(df, intv, model_name="arima",
+                           n_folds=2, test_obs=60, min_train_obs=200,
+                           config_overrides=self._CV_CFG)
 
     # --- percent-based CV ---
 

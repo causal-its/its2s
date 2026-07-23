@@ -400,3 +400,86 @@ class TestTuneModelCrossMethodArgs:
                 test_obs=60, min_train_obs=400,
                 test_pct=0.10,
             )
+
+
+# ---------------------------------------------------------------------------
+# cv_end_date: leakage-safe derived default (GH #40)
+# ---------------------------------------------------------------------------
+
+class TestTuneModelCvEndDate:
+    """tune_model resolves cv_end_date once, upfront, and records it."""
+
+    INTV = "2021-06-01"
+
+    def _df(self):
+        dates = pd.date_range("2020-01-01", periods=600, freq="D")
+        return pd.DataFrame({"ds": dates, "y": np.arange(600.0)})
+
+    def _stub_cv(self, monkeypatch):
+        # Recording stub: tune_model's contract with time_series_cv is
+        # exercised without fitting any model.
+        from its2s.cross_validation import CVResult
+        calls = []
+
+        def fake_cv(df, intervention_date, model_name,
+                    config_overrides=None, **cv_kwargs):
+            calls.append({"config_overrides": config_overrides, **cv_kwargs})
+            return CVResult(model_name=model_name, folds=[], mean_rmse=1.0,
+                            mean_mae=1.0, mean_mape=1.0, mean_r2=0.0,
+                            std_rmse=0.0, std_mae=0.0)
+
+        monkeypatch.setattr("its2s.tuning.time_series_cv", fake_cv)
+        return calls
+
+    def test_derives_cv_end_date_when_none(self, monkeypatch):
+        from its2s.data_prep import prepare_splits
+        calls = self._stub_cv(monkeypatch)
+        df = self._df()
+        expected = prepare_splits(df, self.INTV).test_df["ds"].min()
+        result = tune_model(df, self.INTV, "arima", n_trials=2, n_folds=2)
+        assert result.cv_end_date == expected
+        assert calls, "stub was never called"
+        assert all(c["cv_end_date"] == expected for c in calls), (
+            "every trial must receive the concrete derived date, never None"
+        )
+
+    def test_explicit_cv_end_date_passed_through(self, monkeypatch):
+        calls = self._stub_cv(monkeypatch)
+        explicit = pd.Timestamp(self.INTV) - pd.Timedelta(days=45)
+        result = tune_model(self._df(), self.INTV, "arima",
+                            n_trials=2, n_folds=2, cv_end_date=explicit)
+        assert result.cv_end_date == explicit
+        assert all(c["cv_end_date"] == explicit for c in calls)
+
+    def test_cv_end_date_after_intervention_raises(self, monkeypatch):
+        # Upfront raise: _evaluate_trial swallows exceptions into inf rows,
+        # so an invalid explicit cap must fail before any trial launches.
+        calls = self._stub_cv(monkeypatch)
+        bad = pd.Timestamp(self.INTV) + pd.Timedelta(days=10)
+        with pytest.raises(ValueError, match="cv_end_date"):
+            tune_model(self._df(), self.INTV, "arima",
+                       n_trials=2, n_folds=2, cv_end_date=bad)
+        assert calls == []
+
+    def test_config_overrides_periods_drive_derivation(self, monkeypatch):
+        from its2s.data_prep import prepare_splits
+        calls = self._stub_cv(monkeypatch)
+        df = self._df()
+        overrides = {
+            "periods": {"split_method": "days",
+                        "test_days": 30, "holdout_days": 30},
+            "models": {"arima": {"max_p": 99}},
+        }
+        expected = prepare_splits(df, self.INTV, split_method="days",
+                                  test_days=30, holdout_days=30,
+                                  min_test_obs=0).test_df["ds"].min()
+        assert expected != prepare_splits(df, self.INTV).test_df["ds"].min()
+        result = tune_model(df, self.INTV, "arima", n_trials=2, n_folds=2,
+                            config_overrides=overrides)
+        assert result.cv_end_date == expected
+        for c in calls:
+            merged = c["config_overrides"]
+            assert merged["periods"] == overrides["periods"]
+            # Trial params always win over user model overrides.
+            assert merged["models"]["arima"]["max_p"] != 99
+            assert 1 <= merged["models"]["arima"]["max_p"] <= 5

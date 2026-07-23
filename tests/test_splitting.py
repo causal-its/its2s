@@ -172,3 +172,44 @@ def test_min_test_obs_zero_disables():
         warnings.simplefilter("error")
         prepare_splits(df, intv, split_method="percent",
                        test_pct=0.10, min_test_obs=0)
+
+
+# ---------------------------------------------------------------------------
+# resolve_split_config: shared periods-section resolution (GH #40)
+# ---------------------------------------------------------------------------
+
+class TestResolveSplitConfig:
+    def test_percent_defaults(self):
+        from its2s.data_prep import resolve_split_config
+        method, kwargs = resolve_split_config({})
+        assert method == "percent"
+        assert kwargs == {"test_pct": 0.20, "holdout_pct": 1.0}
+
+    def test_days_defaults(self):
+        from its2s.data_prep import resolve_split_config
+        method, kwargs = resolve_split_config({"split_method": "days"})
+        assert method == "days"
+        assert kwargs == {"test_days": 365, "holdout_days": 365}
+
+    def test_observations_none_passthrough(self):
+        # Missing obs keys pass through as None; prepare_splits raises on
+        # them, not the resolver.
+        from its2s.data_prep import resolve_split_config
+        method, kwargs = resolve_split_config(
+            {"split_method": "observations"})
+        assert method == "observations"
+        assert kwargs == {"test_obs": None, "holdout_obs": None}
+
+    def test_argument_overrides_config_key(self):
+        from its2s.data_prep import resolve_split_config
+        method, kwargs = resolve_split_config(
+            {"split_method": "percent", "test_pct": 0.30}, "days")
+        assert method == "days"
+        assert kwargs == {"test_days": 365, "holdout_days": 365}
+
+    def test_config_not_mutated(self):
+        from its2s.data_prep import resolve_split_config
+        cfg = {"split_method": "percent", "test_pct": 0.30}
+        before = dict(cfg)
+        resolve_split_config(cfg, "observations")
+        assert cfg == before

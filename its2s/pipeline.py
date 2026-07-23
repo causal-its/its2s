@@ -12,7 +12,7 @@ import pandas as pd
 from .bootstrap.mbb import MovingBlockBootstrap
 from .diagnostics import compute_diagnostics, DiagnosticsResult
 from .settings import get_model_config, load_config
-from .data_prep import prepare_splits
+from .data_prep import prepare_splits, resolve_split_config
 from .frequency import resolve_frequency
 from .validation import validate_inputs
 from .metrics.error_metrics import compute_metrics, MetricsResult
@@ -215,25 +215,8 @@ def run_single_its(
     # arguments belonging to the resolved method are read and passed on:
     # prepare_splits raises on cross-method arguments (#28, #54).
     periods_cfg = config["periods"]
-    if split_method is not None:
-        periods_cfg["split_method"] = split_method
-    split_method_resolved = periods_cfg.get("split_method", "percent")
-    if split_method_resolved == "days":
-        split_kwargs = {
-            "test_days": periods_cfg.get("test_days", 365),
-            "holdout_days": periods_cfg.get("holdout_days", 365),
-        }
-    elif split_method_resolved == "observations":
-        split_kwargs = {
-            "test_obs": periods_cfg.get("test_obs"),
-            "holdout_obs": periods_cfg.get("holdout_obs"),
-        }
-    else:
-        # "percent" is the default; an unknown method raises in prepare_splits.
-        split_kwargs = {
-            "test_pct": periods_cfg.get("test_pct", 0.20),
-            "holdout_pct": periods_cfg.get("holdout_pct", 1.0),
-        }
+    split_method_resolved, split_kwargs = resolve_split_config(
+        periods_cfg, split_method)
 
     # 1b. Validate inputs
     validate_inputs(df, intervention_date, date_col, target_col,

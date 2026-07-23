@@ -22,6 +22,8 @@ print(comparison_df)
 
 The returned `comparison_df` shows train and test metrics side by side. Select the model
 with the lowest test RMSE, then pass it to `run_single_its` for the final counterfactual.
+If you tune hyperparameters first, `tune_model` keeps its CV folds out of this test
+window by default (GH #40), so the test metrics you select on stay clean out-of-sample.
 
 ---
 

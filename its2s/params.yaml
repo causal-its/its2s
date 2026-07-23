@@ -138,6 +138,9 @@ tuning:
   metric: "rmse"
   n_jobs: 1
   seed: 42
+  # cv_end_date is not a config key: it is derived at runtime from the
+  # 'periods' split so tuning folds stay out of the held-out test window
+  # (GH #40); pass cv_end_date to tune_model to override.
   # Default trial counts per model (matches R reference grid sizes)
   model_defaults:
     prophet_xgb: 100
