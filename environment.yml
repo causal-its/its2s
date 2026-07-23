@@ -24,3 +24,6 @@ dependencies:
   - pip
   - pip:
       - -e .
+      # Notebook execution for understanding_its2s/ (re-running the tutorials):
+      - ipykernel
+      - nbclient
