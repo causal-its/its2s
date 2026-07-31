@@ -37,7 +37,7 @@ class ProphetXGBHybridModel(BaseModel):
 
         self._prophet = Prophet(
             yearly_seasonality=p_params.get("yearly_seasonality", True),
-            weekly_seasonality=p_params.get("weekly_seasonality", True),
+            weekly_seasonality=p_params.get("weekly_seasonality", "auto"),
             daily_seasonality=p_params.get("daily_seasonality", False),
             changepoint_prior_scale=p_params.get("changepoint_prior_scale", 0.05),
         )

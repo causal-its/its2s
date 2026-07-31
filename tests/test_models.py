@@ -445,6 +445,42 @@ class TestProphetThenXGBSpecific:
 
 
 # ===================================================================
+# Prophet weekly_seasonality "auto" default (GH #60)
+# ===================================================================
+class TestProphetWeeklySeasonalityAuto:
+    """The shipped weekly_seasonality default defers to Prophet's spacing rule.
+
+    On a weekly grid the weekly component is degenerate (its period equals the
+    observation spacing), so "auto" must disable it; on a daily grid "auto"
+    resolves to the same configuration the previous hard-coded True produced
+    (fourier_order 3), keeping daily runs bit-identical.
+    """
+
+    @staticmethod
+    def _make_model(model_name):
+        if model_name == "prophet_xgb":
+            from its2s.models.prophet_xgb import ProphetXGBHybridModel
+            return ProphetXGBHybridModel(params={})
+        from its2s.models.prophet_then_xgb import ProphetThenXGBModel
+        return ProphetThenXGBModel(params={})
+
+    @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
+    def test_weekly_disabled_on_weekly_grid(self, model_name):
+        df, _, _ = make_weekly_series(seed=1500)
+        model = self._make_model(model_name)
+        _run_quiet(model.fit, df.iloc[:156])
+        assert "weekly" not in model._prophet.seasonalities
+        assert "yearly" in model._prophet.seasonalities
+
+    @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
+    def test_weekly_enabled_on_daily_grid(self, model_name):
+        df, _, _ = make_short_series(n_pre=180, n_post=30, seed=1501)
+        model = self._make_model(model_name)
+        _run_quiet(model.fit, df.iloc[:180])
+        assert model._prophet.seasonalities["weekly"]["fourier_order"] == 3
+
+
+# ===================================================================
 # NeuralProphet-Specific Unit Tests
 # ===================================================================
 @pytest.mark.skipif(not _has_neuralprophet(), reason="neuralprophet not installed")
@@ -456,6 +492,13 @@ class TestNeuralProphetSpecific:
         model = NeuralProphetModel(params=_NP_FAST_PARAMS)
         assert model._model is None
         assert model._fit_result is None
+
+    def test_weekly_seasonality_auto_reaches_library(self):
+        """GH #60: the default "auto" is handed to NeuralProphet unresolved;
+        the library applies the same spacing rule as Prophet at fit time."""
+        from its2s.models.neuralprophet import NeuralProphetModel
+        np_model = NeuralProphetModel(params={})._build_model()
+        assert np_model.config_seasonality.periods["weekly"].arg == "auto"
 
     def test_clone_clears_model_attribute(self):
         from its2s.models.neuralprophet import NeuralProphetModel

@@ -29,7 +29,7 @@ class NeuralProphetModel(BaseModel):
         model = NeuralProphet(
             n_lags=p.get("n_lags", 14),
             yearly_seasonality=p.get("yearly_seasonality", True),
-            weekly_seasonality=p.get("weekly_seasonality", True),
+            weekly_seasonality=p.get("weekly_seasonality", "auto"),
             learning_rate=p.get("learning_rate", 0.01),
             epochs=p.get("epochs", 100),
             batch_size=p.get("batch_size", 64),
