@@ -92,20 +92,23 @@ print(ate)
 
 ### `{model}_metrics.csv` — model performance on train and test windows
 
+Each reported metric has one job:
+
 | Column | Description |
 |--------|-------------|
 | `window` | "train" or "test" |
-| `rmse` | Root mean square error |
-| `mae` | Mean absolute error |
-| `mape` | Mean absolute percentage error |
-| `smape` | Symmetric MAPE |
-| `mase` | Mean absolute scaled error |
-| `r2` | R² (coefficient of determination) |
+| `rmse` | Root mean square error: accuracy on the mean, the model-selection metric |
+| `mae` | Mean absolute error: accuracy in native outcome units, robust |
+| `mape` | Mean absolute percentage error: percentage communication. `NaN` (with a warning) when the window contains zero actuals — skipping zeros would silently drop the hardest observations |
+| `mase` | Seasonal-naive benchmark ratio: model MAE over the in-sample MAE of the `m`-period seasonal naive. Below 1 = beats the benchmark. This is a benchmark comparison, not an accuracy metric |
+| `mase_m` | The benchmark period `m`. Derived from the series frequency when `metrics.seasonality` is `"auto"` (daily 7, weekly 52, monthly 12) |
+| `mase_denominator` | The benchmark's in-sample seasonal-naive MAE, in native units. The ratio is meaningless without it |
 
 **How to use**: assess these before interpreting excess estimates. The test window
 performance is the most important signal — it measures how well the model would have
-tracked the outcome in the pre-event period it was not trained on. Poor test R² or
-large test RMSE relative to the outcome's scale indicates that the counterfactual is
+tracked the outcome in the pre-event period it was not trained on. Large test RMSE
+relative to the outcome's scale, or a test MASE near or above 1 (no better than
+carrying forward the last seasonal cycle), indicates that the counterfactual is
 unreliable.
 
 ---

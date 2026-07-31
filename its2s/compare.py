@@ -68,11 +68,10 @@ def compare_models(df, intervention_date, model_names=None,
             row = {
                 "model": model_name,
                 "train_rmse": result.metrics_train.rmse,
-                "train_r2": result.metrics_train.r2,
                 "test_rmse": result.metrics_test.rmse,
                 "test_mae": result.metrics_test.mae,
                 "test_mape": result.metrics_test.mape,
-                "test_r2": result.metrics_test.r2,
+                "test_mase": result.metrics_test.mase,
                 "bootstrap_n_successful": result.bootstrap_result.n_successful,
             }
 

@@ -10,7 +10,10 @@ import numpy as np
 import pandas as pd
 
 from .data_prep import prepare_splits, resolve_split_config
-from .metrics.error_metrics import MetricsResult, compute_metrics
+from .frequency import resolve_frequency
+from .metrics.error_metrics import (
+    MetricsResult, compute_metrics, resolve_metrics_seasonality,
+)
 from .settings import get_model_config, load_config
 
 logger = logging.getLogger(__name__)
@@ -43,7 +46,6 @@ class CVResult:
     mean_rmse: float
     mean_mae: float
     mean_mape: float
-    mean_r2: float
     std_rmse: float
     std_mae: float
     cv_end_date: pd.Timestamp | None = None
@@ -55,7 +57,6 @@ class CVResult:
             f"  RMSE: {self.mean_rmse:.4f} +/- {self.std_rmse:.4f}",
             f"  MAE:  {self.mean_mae:.4f} +/- {self.std_mae:.4f}",
             f"  MAPE: {self.mean_mape:.2f}%",
-            f"  R2:   {self.mean_r2:.4f}",
         ]
         return "\n".join(lines)
 
@@ -227,7 +228,7 @@ def time_series_cv(df, intervention_date, model_name="arima",
     target_col = target_col or config["data"]["target_col"]
     covariate_cols = (covariate_cols if covariate_cols is not None
                       else config["data"]["covariate_cols"])
-    seasonality = config["metrics"]["seasonality"]
+    seasonality_cfg = config["metrics"]["seasonality"]
 
     intervention_date = pd.Timestamp(intervention_date)
     df = df.copy()
@@ -286,6 +287,16 @@ def time_series_cv(df, intervention_date, model_name="arima",
             "data."
         )
 
+    # Resolve the MASE period m once for all folds, guarded against the
+    # SMALLEST training window (fold 1), so m is constant and fold metrics
+    # stay comparable (GH #62). The series frequency is only needed on the
+    # 'auto' path.
+    series_freq = (resolve_frequency(cv_df[date_col])
+                   if seasonality_cfg == "auto" else None)
+    seasonality = resolve_metrics_seasonality(
+        seasonality_cfg, n_train=min_train_obs, series_freq=series_freq,
+    )
+
     model_params = get_model_config(config, model_name)
     fold_results = []
 
@@ -333,8 +344,8 @@ def time_series_cv(df, intervention_date, model_name="arima",
         ))
 
         logger.info(
-            "CV fold %d/%d: RMSE=%.4f, MAE=%.4f, R2=%.4f",
-            i + 1, n_folds, metrics.rmse, metrics.mae, metrics.r2,
+            "CV fold %d/%d: RMSE=%.4f, MAE=%.4f",
+            i + 1, n_folds, metrics.rmse, metrics.mae,
         )
 
     if not fold_results:
@@ -350,7 +361,6 @@ def time_series_cv(df, intervention_date, model_name="arima",
     rmses = [f.metrics.rmse for f in fold_results]
     maes = [f.metrics.mae for f in fold_results]
     mapes = [f.metrics.mape for f in fold_results]
-    r2s = [f.metrics.r2 for f in fold_results]
 
     return CVResult(
         model_name=model_name,
@@ -358,7 +368,6 @@ def time_series_cv(df, intervention_date, model_name="arima",
         mean_rmse=float(np.mean(rmses)),
         mean_mae=float(np.mean(maes)),
         mean_mape=float(np.nanmean(mapes)),
-        mean_r2=float(np.mean(r2s)),
         std_rmse=float(np.std(rmses, ddof=1)) if len(rmses) > 1 else 0.0,
         std_mae=float(np.std(maes, ddof=1)) if len(maes) > 1 else 0.0,
         cv_end_date=cv_end_date,

@@ -73,9 +73,10 @@ Two checks in order of importance:
    The observed and expected lines should track closely before the event. Divergence
    before the event means the model did not capture the baseline trend.
 
-2. **Numeric**: check `{model}_metrics.csv`. A low test R² (e.g., below 0.5) or a test
-   RMSE that is large relative to the outcome's range signals poor generalization. The
-   test window performance — not training performance — is the relevant signal.
+2. **Numeric**: check `{model}_metrics.csv`. A test MASE near or above 1 (no better
+   than carrying forward the last seasonal cycle) or a test RMSE that is large
+   relative to the outcome's range signals poor generalization. The test window
+   performance — not training performance — is the relevant signal.
 
 If either check fails, try a different model via `compare_models()` or add covariates
 that help explain the baseline trend.

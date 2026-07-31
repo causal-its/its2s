@@ -84,7 +84,12 @@ bootstrap:
   n_jobs: 1
 
 metrics:
-  seasonality: 7
+  # MASE benchmark period m. "auto" derives the dominant seasonal cycle from
+  # the resolved series frequency (daily 7, weekly 52, monthly 12). An integer
+  # names the benchmark explicitly (e.g. 365 for annual-on-daily) and is
+  # honored or fails hard: the guard n_train >= 2m falls back to m=1 with a
+  # warning on "auto", but never silently substitutes an explicit choice.
+  seasonality: auto
 
 output:
   format: "csv"
