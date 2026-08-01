@@ -165,6 +165,18 @@ class TestModelContract:
         np.testing.assert_allclose(
             reconstructed[finite_mask], actual[finite_mask], rtol=1e-4, atol=1e-4)
 
+    @pytest.mark.parametrize("name,cls,params", _MODEL_PARAMS, ids=_MODEL_IDS)
+    def test_clone_fresh_does_not_share_nested_params(self, name, cls, params):
+        """A clone's nested param dicts must be independent copies: MBB refits
+        clone per draw, and a shared sub-dict would let a mutation on one clone
+        silently propagate to the parent and all later draws."""
+        nested = {**params, "prophet": {"changepoint_prior_scale": 0.05}}
+        model = cls(params=nested)
+        clone = model.clone_fresh()
+        assert clone.params == model.params
+        clone.params["prophet"]["changepoint_prior_scale"] = 0.99
+        assert model.params["prophet"]["changepoint_prior_scale"] == 0.05
+
 
 # ===================================================================
 # MBB Bootstrap (parametrized across all 4 models)

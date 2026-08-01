@@ -2,6 +2,8 @@
 # Usage: from its2s.models.prophet_then_xgb import ProphetThenXGBModel
 # Dependencies: prophet, xgboost, numpy, pandas
 
+import copy
+
 import numpy as np
 import pandas as pd
 from prophet import Prophet
@@ -107,4 +109,4 @@ class ProphetThenXGBModel(BaseModel):
         )
 
     def clone_fresh(self):
-        return ProphetThenXGBModel(params=self.params.copy())
+        return ProphetThenXGBModel(params=copy.deepcopy(self.params))

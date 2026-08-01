@@ -2,6 +2,7 @@
 # Usage: from its2s.models.neuralprophet import NeuralProphetModel
 # Dependencies: neuralprophet, numpy, pandas
 
+import copy
 import logging
 import warnings
 
@@ -98,4 +99,4 @@ class NeuralProphetModel(BaseModel):
         )
 
     def clone_fresh(self):
-        return NeuralProphetModel(params=self.params.copy())
+        return NeuralProphetModel(params=copy.deepcopy(self.params))

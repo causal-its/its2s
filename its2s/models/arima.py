@@ -2,6 +2,7 @@
 # Usage: from its2s.models.arima import ARIMAModel
 # Dependencies: pmdarima, numpy, pandas
 
+import copy
 import warnings
 
 import numpy as np
@@ -98,7 +99,7 @@ class ARIMAModel(BaseModel):
 
     def clone_fresh(self):
         return ARIMAModel(
-            params=self.params.copy(),
+            params=copy.deepcopy(self.params),
             _fixed_order=self._fixed_order,
             _fixed_seasonal_order=self._fixed_seasonal_order,
         )
