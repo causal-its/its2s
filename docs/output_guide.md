@@ -162,6 +162,27 @@ guidance on what to do when the fit is poor.
 
 ---
 
+### Residual diagnostic plots — four PNGs per run
+
+Four residual plots are written alongside the counterfactual figure. Like
+`{model}_diagnostics.csv`, they describe the train-only fit until the final
+refit lands (GH #63). See [Diagnostics](diagnostics.md#residual-plots) for how
+to read each one.
+
+| File | Content |
+|------|---------|
+| `{model}_residual_acf.png` | ACF correlogram of the persisted diagnostics vector, key lags `{1, m}` marked, 95% white-noise bands |
+| `{model}_residual_pacf.png` | PACF correlogram over the same lag range, computed at plot time |
+| `{model}_residuals_over_time.png` | Raw training residuals against the training dates |
+| `{model}_residual_qq.png` | Normal QQ plot of the training residuals |
+
+These plots honor `output.plot_dpi`, `output.plot_colors`, and
+`output.plot_font_sizes` from the config. `output.plot_figsize` applies to the
+counterfactual figure only; the diagnostic plots use fixed shapes suited to
+their content (wide correlograms, square QQ).
+
+---
+
 ## Accessing outputs in Python
 
 All outputs are also available on the returned `PipelineResult` object without writing

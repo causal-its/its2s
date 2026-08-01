@@ -19,6 +19,7 @@ from .metrics.error_metrics import (
     compute_metrics, MetricsResult, resolve_metrics_seasonality,
 )
 from .metrics.excess import ExcessResult, calc_ate_summary, calculate_excess
+from .outputs.diagnostic_plots import plot_residual_diagnostics
 from .outputs.plots import plot_counterfactual
 from .outputs.tables import (
     save_ate_summary, save_diagnostics_table, save_excess_table,
@@ -413,6 +414,8 @@ def run_single_its(
             out / f"{model_name}_metrics.csv",
         )
         save_diagnostics_table(diag, out / f"{model_name}_diagnostics.csv")
+        plot_residual_diagnostics(diag, fit_result, splits, out, model_name,
+                                  config=config)
         if not excess_table.obs_excess.empty:
             ate = calc_ate_summary(excess_table)
             save_ate_summary(ate, out / f"{model_name}_ate_summary.csv")

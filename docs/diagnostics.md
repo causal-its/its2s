@@ -64,12 +64,39 @@ The diagnostic splits into three layers computed once:
   Every key lag is a pre-specified check. A key lag the series is too short to
   estimate is reported as `NaN` with a warning naming the reason — "cannot
   estimate the annual lag" is itself diagnostic information.
-- **The picture** — the correlogram plot (planned, GH #65) renders the persisted
-  vector with the key lags marked; it never recomputes.
+- **The picture** — the correlogram plot (`{model}_residual_acf.png`, written to
+  the run output directory) renders the persisted vector with the key lags
+  marked; it never recomputes.
 
 A value above ~0.2 in absolute terms at a key lag warrants investigation. The
 rest of the vector is descriptive context, not a menu of hypothesis tests: with
 ~70 lags, some will exceed the naive threshold by chance.
+
+---
+
+### Residual plots
+
+When an `output_dir` is supplied, four residual diagnostic plots are written
+alongside the counterfactual figure. All four describe the train-only fit — the
+model fit on the training window — until the final refit lands (GH #63), after
+which they follow the final fit automatically. The same values are persisted in
+`{model}_diagnostics.csv` (see the [output guide](output_guide.md)).
+
+| File | Shows |
+|------|-------|
+| `{model}_residual_acf.png` | The persisted ACF vector (never recomputed) over lags 1..`max_lag`, with the key lags `{1, m}` marked and labeled. The bands are 95% white-noise nulls (`+/-1.96/sqrt(n)`), the reference for "is this lag distinguishable from noise" |
+| `{model}_residual_pacf.png` | Partial ACF over the same lag range (capped at `n // 2 - 1`), computed at plot time via statsmodels (`method="ywm"`). Same bands, so the two correlograms read in parallel |
+| `{model}_residuals_over_time.png` | Raw training residuals against the training dates; NaN residuals (e.g. NeuralProphet AR warmup) appear as gaps. Look for drift, variance changes, or clusters |
+| `{model}_residual_qq.png` | Normal QQ plot of the residuals; the visual companion of the Shapiro-Wilk test |
+
+When the series is too short to reach the dominant seasonal lag
+(`max_lag < m`), the correlograms say so on the figure instead of silently
+truncating; when it is too short for any lag, an annotated placeholder is
+written (with a warning) so the run's file inventory stays stable.
+
+The correlogram is what makes structure at unexpected lags visible: on a weekly
+series, unmodeled annual seasonality shows up at lag 52 — a lag no fixed
+daily-shaped report would surface.
 
 ---
 

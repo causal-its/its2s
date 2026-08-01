@@ -862,6 +862,11 @@ class TestModelIntegration:
         assert (tmp_path / f"{model_name}_counterfactual.png").exists()
         assert (tmp_path / f"{model_name}_excess.csv").exists()
         assert (tmp_path / f"{model_name}_metrics.csv").exists()
+        assert (tmp_path / f"{model_name}_diagnostics.csv").exists()
+        assert (tmp_path / f"{model_name}_residual_acf.png").exists()
+        assert (tmp_path / f"{model_name}_residual_pacf.png").exists()
+        assert (tmp_path / f"{model_name}_residuals_over_time.png").exists()
+        assert (tmp_path / f"{model_name}_residual_qq.png").exists()
 
 
 # ===================================================================

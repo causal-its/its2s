@@ -941,16 +941,21 @@ class TestOutputs:
         loaded = pd.read_csv(path)
         assert len(loaded) == 2
 
-    def _make_diagnostics(self, n=200, alias="D", seed=1):
-        """DiagnosticsResult from synthetic residuals, for writer tests."""
+    def _make_fit_and_diag(self, n=200, alias="D", seed=1):
+        """(FitResult, DiagnosticsResult) from synthetic residuals."""
         from its2s.diagnostics import compute_diagnostics
         from its2s.frequency import SeriesFrequency
         from its2s.models.base import FitResult
         rng = np.random.default_rng(seed)
         fr = FitResult(fitted_values=np.ones(n),
                        residuals=rng.normal(0, 2.0, n))
-        return compute_diagnostics(fr, "test_model",
+        diag = compute_diagnostics(fr, "test_model",
                                    SeriesFrequency.from_alias(alias))
+        return fr, diag
+
+    def _make_diagnostics(self, n=200, alias="D", seed=1):
+        """DiagnosticsResult from synthetic residuals, for writer tests."""
+        return self._make_fit_and_diag(n=n, alias=alias, seed=seed)[1]
 
     def test_save_diagnostics_table_columns_and_context(self, tmp_path):
         from its2s.outputs.tables import save_diagnostics_table
@@ -1036,6 +1041,168 @@ class TestOutputs:
         acf_rows = loaded[loaded["section"] == "acf"]
         assert (acf_rows["lag_units"] == "observations").all()
         assert (acf_rows["status"] == "ok").all()
+
+    def test_plot_residual_acf_saves(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_acf
+        _, diag = self._make_fit_and_diag(n=200, alias="D")
+        path = tmp_path / "acf.png"
+        plot_residual_acf(diag, save_path=path)
+        assert path.exists()
+        assert path.stat().st_size > 0
+
+    def test_plot_residual_acf_renders_persisted_vector(self, tmp_path):
+        # The correlogram must draw DiagnosticsResult.acf as persisted,
+        # never recompute (the docs/diagnostics.md three-layer contract):
+        # a tampered value must appear in the figure verbatim.
+        from its2s.outputs.diagnostic_plots import plot_residual_acf
+        import matplotlib.pyplot as plt
+        _, diag = self._make_fit_and_diag(n=200, alias="D")
+        diag.acf[5] = 0.9
+        fig = plot_residual_acf(diag, save_path=None)
+        ax = fig.axes[0]
+        heights = {}
+        for coll in ax.collections:
+            for seg in coll.get_segments():
+                (x0, _y0), (_x1, y1) = seg
+                heights[round(x0)] = y1
+        assert heights[5] == pytest.approx(0.9)
+        plt.close(fig)
+
+    def test_plot_residual_acf_annotates_unreachable_m(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_acf
+        import matplotlib.pyplot as plt
+        with pytest.warns(UserWarning, match="key lag 52"):
+            _, diag = self._make_fit_and_diag(n=60, alias="W-SUN")
+        fig = plot_residual_acf(diag, save_path=None)
+        texts = " ".join(t.get_text() for t in fig.axes[0].texts)
+        assert "m=52" in texts
+        assert "unavailable" in texts
+        plt.close(fig)
+
+    def test_plot_residual_acf_short_series_placeholder(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_acf
+        with pytest.warns(UserWarning, match="key lag"):
+            _, diag = self._make_fit_and_diag(n=12, alias="D")
+        path = tmp_path / "acf_short.png"
+        with pytest.warns(UserWarning, match="too short"):
+            plot_residual_acf(diag, save_path=path)
+        assert path.exists()
+
+    def test_plot_residual_pacf_saves(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_pacf
+        fr, diag = self._make_fit_and_diag(n=200, alias="D")
+        path = tmp_path / "pacf.png"
+        plot_residual_pacf(diag, fr, save_path=path)
+        assert path.exists()
+        assert path.stat().st_size > 0
+
+    def test_plot_residual_pacf_lag_cap(self, tmp_path):
+        # n = 64: max_lag = min(32, 34) = 32 but statsmodels requires
+        # nlags < n // 2; the cap must prevent the ValueError
+        from its2s.outputs.diagnostic_plots import plot_residual_pacf
+        fr, diag = self._make_fit_and_diag(n=64, alias="D")
+        path = tmp_path / "pacf_cap.png"
+        plot_residual_pacf(diag, fr, save_path=path)
+        assert path.exists()
+
+    def test_plot_residuals_over_time_saves(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residuals_over_time
+        from its2s.data_prep import prepare_splits
+        from its2s.models.base import FitResult
+        df, intv, _ = make_short_series(n_pre=180, n_post=30)
+        splits = prepare_splits(df, intv, split_method="days",
+                                test_days=30, holdout_days=30)
+        n_train = len(splits.train_df)
+        rng = np.random.default_rng(2)
+        fr = FitResult(fitted_values=np.ones(n_train),
+                       residuals=rng.normal(0, 1.0, n_train))
+        path = tmp_path / "rot.png"
+        plot_residuals_over_time(fr, splits, save_path=path)
+        assert path.exists()
+
+    def test_plot_residuals_over_time_leading_nans(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residuals_over_time
+        from its2s.data_prep import prepare_splits
+        from its2s.models.base import FitResult
+        df, intv, _ = make_short_series(n_pre=180, n_post=30)
+        splits = prepare_splits(df, intv, split_method="days",
+                                test_days=30, holdout_days=30)
+        n_train = len(splits.train_df)
+        residuals = np.random.default_rng(3).normal(0, 1.0, n_train)
+        residuals[:5] = np.nan
+        fr = FitResult(fitted_values=np.ones(n_train), residuals=residuals)
+        path = tmp_path / "rot_nan.png"
+        plot_residuals_over_time(fr, splits, save_path=path)
+        assert path.exists()
+
+    def test_plot_residuals_over_time_length_mismatch_warns(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residuals_over_time
+        from its2s.data_prep import prepare_splits
+        from its2s.models.base import FitResult
+        df, intv, _ = make_short_series(n_pre=180, n_post=30)
+        splits = prepare_splits(df, intv, split_method="days",
+                                test_days=30, holdout_days=30)
+        fr = FitResult(fitted_values=np.ones(10),
+                       residuals=np.zeros(10))
+        path = tmp_path / "rot_mismatch.png"
+        with pytest.warns(UserWarning, match="does not match"):
+            plot_residuals_over_time(fr, splits, save_path=path)
+        assert path.exists()
+
+    def test_plot_residual_qq_saves(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_qq
+        fr, _ = self._make_fit_and_diag(n=200, alias="D")
+        path = tmp_path / "qq.png"
+        plot_residual_qq(fr, save_path=path)
+        assert path.exists()
+        assert path.stat().st_size > 0
+
+    def test_plot_residual_diagnostics_writes_four_files(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_diagnostics
+        from its2s.data_prep import prepare_splits
+        from its2s.diagnostics import compute_diagnostics
+        from its2s.frequency import SeriesFrequency
+        from its2s.models.base import FitResult
+        df, intv, _ = make_short_series(n_pre=180, n_post=30)
+        splits = prepare_splits(df, intv, split_method="days",
+                                test_days=30, holdout_days=30)
+        n_train = len(splits.train_df)
+        rng = np.random.default_rng(4)
+        fr = FitResult(fitted_values=np.ones(n_train),
+                       residuals=rng.normal(0, 1.0, n_train))
+        diag = compute_diagnostics(fr, "test_model",
+                                   SeriesFrequency.from_alias("D"))
+        paths = plot_residual_diagnostics(diag, fr, splits, tmp_path,
+                                          "test_model")
+        assert len(paths) == 4
+        expected = [
+            "test_model_residual_acf.png",
+            "test_model_residual_pacf.png",
+            "test_model_residuals_over_time.png",
+            "test_model_residual_qq.png",
+        ]
+        for name in expected:
+            assert (tmp_path / name).exists()
+
+    def test_plot_residual_diagnostics_unmapped_freq_ok(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_diagnostics
+        from its2s.data_prep import prepare_splits
+        from its2s.diagnostics import compute_diagnostics
+        from its2s.frequency import SeriesFrequency
+        from its2s.models.base import FitResult
+        df, intv, _ = make_short_series(n_pre=180, n_post=30)
+        splits = prepare_splits(df, intv, split_method="days",
+                                test_days=30, holdout_days=30)
+        n_train = len(splits.train_df)
+        rng = np.random.default_rng(5)
+        fr = FitResult(fitted_values=np.ones(n_train),
+                       residuals=rng.normal(0, 1.0, n_train))
+        with pytest.warns(UserWarning, match="No dominant seasonal period"):
+            diag = compute_diagnostics(fr, "test_model",
+                                       SeriesFrequency.from_alias("QS-JAN"))
+        paths = plot_residual_diagnostics(diag, fr, splits, tmp_path,
+                                          "test_model")
+        assert all(p.exists() for p in paths)
 
     def test_pipeline_result_summary_is_string(self):
         pr, _, _ = self._make_minimal_pipeline_result()
