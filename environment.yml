@@ -23,4 +23,6 @@ dependencies:
   - xgboost>=2.0
   - pip
   - pip:
-      - -e .
+      # [tutorials] adds nbconvert + ipykernel so scripts/execute_tutorials.sh
+      # can re-execute the understanding_its2s/ notebooks in this environment.
+      - -e .[tutorials]
