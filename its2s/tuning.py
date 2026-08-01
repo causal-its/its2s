@@ -53,6 +53,7 @@ _ARIMA_SPACE = {
 }
 
 _NEURALPROPHET_SPACE = {
+    # n_lags bounds are OBSERVATION counts (7..30 rows), not calendar days.
     "n_lags":          (7,     30,   "int",   "linear"),
     "epochs":          (50,    200,  "int",   "linear"),
     "learning_rate":   (0.001, 0.1,  "float", "log"),

@@ -4,12 +4,16 @@
 
 
 def fixed_block_length(L=14):
-    """Return a fixed block length (default = 14 days / 2 weeks).
+    """Return a fixed block length in observations.
+
+    Block length counts OBSERVATIONS (rows of the regular series), never
+    calendar days: the default 14 is two weeks on daily data but 14 weeks on
+    a weekly series. The default was calibrated on daily data.
 
     Parameters
     ----------
     L : int
-        Block length.
+        Block length in observations.
 
     Returns
     -------

@@ -59,7 +59,7 @@ models:
       gamma: 1.0
 
   neuralprophet:
-    n_lags: 14
+    n_lags: 14  # AR window in OBSERVATIONS, not days: two weeks on daily data, 14 weeks on weekly; GH #59
     yearly_seasonality: auto  # disabled with a visible warning when history spans < 730 days; GH #60, D-057
     weekly_seasonality: auto  # same rule as Prophet's, verified in neuralprophet 0.8.0; GH #60
     learning_rate: 0.01
@@ -85,6 +85,9 @@ models:
 bootstrap:
   method: "mbb"
   n_sim: 1000
+  # Block length in OBSERVATIONS, not days: 14 = two weeks on daily data but
+  # 14 weeks on a weekly series. Calibrated on daily data; adjust for other
+  # frequencies (a data-driven selector is parked, not a launch item). GH #59
   block_length: 14
   ci_method: "quantile"
   ci_level: 0.95

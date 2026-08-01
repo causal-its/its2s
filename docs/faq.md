@@ -86,8 +86,9 @@ that help explain the baseline trend.
 **What block length should I use for the Moving Block Bootstrap?**
 
 The default `block_length=14` is appropriate for daily data with moderate
-autocorrelation (approximately two weeks of temporal dependence). It is not
-automatically adapted to other data configurations.
+autocorrelation (approximately two weeks of temporal dependence). Block length is
+measured in observations, never calendar days -- 14 means 14 weeks on a weekly
+series -- and it is not automatically adapted to other data configurations.
 
 For non-daily data or series with substantially different autocorrelation structure,
 the default may produce CI coverage that is too narrow or too wide. Adjust via
@@ -128,6 +129,9 @@ Yes. Frequency-dependent defaults resolve automatically, with two caveats:
 - Consider adjusting `block_length` for the MBB (default 14 is calibrated for daily
   data; block length is measured in observations, so 14 means 14 weeks on a weekly
   series).
+- NeuralProphet's `n_lags` is likewise an observation count, not days: the default
+  14 is a 14-week autoregressive window on a weekly series. Consider whether that
+  window is what you mean.
 
 ---
 

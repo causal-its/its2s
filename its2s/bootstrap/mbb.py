@@ -23,7 +23,7 @@ def _resample_blocks(residuals, block_length, rng):
     residuals : np.ndarray
         Original residuals from the fitted model.
     block_length : int
-        Length of each block.
+        Length of each block, in observations (rows), never calendar days.
     rng : np.random.Generator
         Random number generator.
 
@@ -72,7 +72,12 @@ def _single_mbb_sim(sim_idx, model, train_df, target_df, fitted_values,
 
 
 class MovingBlockBootstrap(BaseBootstrap):
-    """Moving Block Bootstrap for generating counterfactual prediction CIs."""
+    """Moving Block Bootstrap for generating counterfactual prediction CIs.
+
+    block_length is measured in observations (rows of the regular series),
+    never calendar days: the default 14, calibrated on daily data, spans 14
+    weeks on a weekly series.
+    """
 
     def __init__(self, n_sim=1000, block_length=14, ci_method="quantile",
                  ci_level=0.95, n_jobs=1):

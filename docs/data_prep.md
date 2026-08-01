@@ -106,9 +106,14 @@ frequencies, but requires configuration adjustments:
   rows -- a mid-series drop creates a gap; fill or aggregate to a regular grid
   instead.
 
-- **Block length**: the default MBB block length (`bootstrap.block_length=14`) was
-  derived for daily data. For other frequencies, this value may need to be adjusted
-  manually.
+- **Block length**: `bootstrap.block_length` is measured in observations (rows),
+  never calendar days: the default 14 -- derived for daily data -- spans two weeks
+  on a daily series but 14 weeks on a weekly one. For non-daily frequencies, this
+  value may need to be adjusted manually.
+
+- **NeuralProphet AR window**: `n_lags` likewise counts observations, not days:
+  the default 14 is a two-week autoregressive window on daily data but a 14-week
+  window on weekly data. Consider whether that window is what you mean.
 
 ---
 

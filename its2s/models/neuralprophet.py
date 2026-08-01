@@ -15,7 +15,13 @@ from ..frequency import resolve_frequency
 
 
 class NeuralProphetModel(BaseModel):
-    """NeuralProphet model with AR terms and optional lagged regressors."""
+    """NeuralProphet model with AR terms and optional lagged regressors.
+
+    n_lags counts OBSERVATIONS at the resolved series frequency, never
+    calendar days: the default 14 is a two-week AR window on daily data but a
+    14-week window on a weekly series. The first n_lags training rows are AR
+    warmup and produce no fitted value.
+    """
 
     def __init__(self, params=None):
         super().__init__(params)
