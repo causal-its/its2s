@@ -113,10 +113,15 @@ be handled before running.
 
 **Can I use this package on weekly or monthly data?**
 
-Yes, but configuration adjustments are required:
+Yes. Frequency-dependent defaults resolve automatically, with two caveats:
 
-- Set `m` for ARIMA: `config_overrides={"models": {"arima": {"m": 52}}}` for weekly,
-  `{"m": 12}` for monthly.
+- ARIMA's seasonal period `m` defaults to `"auto"` and resolves from the series
+  frequency (daily 7, weekly 52, monthly 12). An explicit override
+  (`config_overrides={"models": {"arima": {"m": 52}}}`) is needed only for
+  frequencies outside that mapping (e.g. quarterly), where auto falls back to
+  `m=1` with a warning. Be aware of the runtime cost: on weekly data the resolved
+  `m=52` seasonal search can be substantially slower; set an explicit smaller `m` or
+  `seasonal: false` to trade seasonality for speed.
 - Series frequency itself is resolved automatically from the date column; the series
   must be a complete, regularly spaced grid (no gaps or duplicate dates), or the
   pipeline raises an error naming the first offending timestamp.

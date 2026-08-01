@@ -366,6 +366,146 @@ class TestARIMASpecific:
 
 
 # ===================================================================
+# ARIMA seasonal period m "auto" resolution (GH #59, D-059)
+# ===================================================================
+class TestARIMASeasonalityAuto:
+    """The shipped m default resolves from the series frequency with a loud
+    non-seasonal fallback; explicit values are honored, never substituted."""
+
+    @staticmethod
+    def _freq(alias):
+        from its2s.frequency import SeriesFrequency
+        return SeriesFrequency.from_alias(alias)
+
+    @staticmethod
+    def _fit_with_stub(monkeypatch, df, params):
+        """Fit an ARIMAModel with pm.auto_arima stubbed out; return the
+        kwargs the stub captured (so tests assert on the m actually passed
+        without paying for a real stepwise search)."""
+        import its2s.models.arima as arima_mod
+
+        captured = {}
+        n = len(df)
+
+        class _Stub:
+            order = (1, 0, 0)
+            seasonal_order = (0, 0, 0, 0)
+
+            def predict_in_sample(self, exogenous=None):
+                return np.zeros(n)
+
+        def fake_auto_arima(y, **kwargs):
+            captured.update(kwargs)
+            return _Stub()
+
+        monkeypatch.setattr(arima_mod.pm, "auto_arima", fake_auto_arima)
+        model = arima_mod.ARIMAModel(params=params)
+        model.fit(df)
+        return captured
+
+    # -- resolver unit tests -------------------------------------------------
+
+    def test_auto_daily_resolves_7(self):
+        from its2s.models.arima import resolve_arima_m
+        assert resolve_arima_m("auto", n_train=400,
+                               series_freq=self._freq("D")) == 7
+
+    def test_auto_weekly_resolves_52(self):
+        from its2s.models.arima import resolve_arima_m
+        assert resolve_arima_m("auto", n_train=200,
+                               series_freq=self._freq("W-SUN")) == 52
+
+    def test_auto_monthly_resolves_12(self):
+        from its2s.models.arima import resolve_arima_m
+        assert resolve_arima_m("auto", n_train=60,
+                               series_freq=self._freq("MS")) == 12
+
+    def test_auto_unmapped_frequency_falls_back_to_1_with_warning(self):
+        from its2s.models.arima import resolve_arima_m
+        with pytest.warns(UserWarning, match="no dominant seasonal period"):
+            m = resolve_arima_m("auto", n_train=100,
+                                series_freq=self._freq("QS-JAN"))
+        assert m == 1
+
+    def test_auto_short_train_falls_back_to_1_with_warning(self):
+        from its2s.models.arima import resolve_arima_m
+        with pytest.warns(UserWarning, match=r"n_train >= 2\*m"):
+            m = resolve_arima_m("auto", n_train=80,
+                                series_freq=self._freq("W-SUN"))
+        assert m == 1
+
+    def test_explicit_failing_guard_warns_and_honors(self):
+        # The deliberate deviation from resolve_metrics_seasonality, which
+        # raises here: a model spec is advisory-warned, never substituted.
+        from its2s.models.arima import resolve_arima_m
+        with pytest.warns(UserWarning, match="honored"):
+            m = resolve_arima_m(52, n_train=60)
+        assert m == 52
+
+    def test_explicit_passing_guard_is_silent(self):
+        from its2s.models.arima import resolve_arima_m
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert resolve_arima_m(7, n_train=400) == 7
+
+    def test_m_below_1_raises(self):
+        from its2s.models.arima import resolve_arima_m
+        with pytest.raises(ValueError, match="must be >= 1"):
+            resolve_arima_m(0, n_train=400)
+
+    # -- fit-path tests (stubbed auto_arima) ---------------------------------
+
+    def test_fit_auto_daily_passes_m7(self, monkeypatch):
+        df = pd.DataFrame({"ds": pd.date_range("2022-01-01", periods=400,
+                                               freq="D"),
+                           "y": np.ones(400)})
+        captured = self._fit_with_stub(monkeypatch, df, params={})
+        assert captured["m"] == 7
+
+    def test_fit_auto_weekly_passes_m52(self, monkeypatch):
+        df = pd.DataFrame({"ds": pd.date_range("2022-01-02", periods=200,
+                                               freq="W-SUN"),
+                           "y": np.ones(200)})
+        captured = self._fit_with_stub(monkeypatch, df, params={})
+        assert captured["m"] == 52
+
+    def test_fit_explicit_m7_emits_no_warning(self, monkeypatch):
+        # Regression for the retired M2-8 warning, which fired on m == 7
+        # even when the user set it deliberately.
+        df = pd.DataFrame({"ds": pd.date_range("2022-01-01", periods=400,
+                                               freq="D"),
+                           "y": np.ones(400)})
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            captured = self._fit_with_stub(monkeypatch, df, params={"m": 7})
+        assert captured["m"] == 7
+
+    def test_fit_auto_irregular_dates_warns_and_falls_back_to_m1(
+            self, monkeypatch):
+        dates = pd.to_datetime(
+            ["2022-01-01", "2022-01-02", "2022-01-05", "2022-01-11",
+             "2022-02-01", "2022-02-03", "2022-03-01", "2022-04-01"])
+        df = pd.DataFrame({"ds": dates, "y": np.ones(len(dates))})
+        with pytest.warns(UserWarning, match="could not resolve"):
+            captured = self._fit_with_stub(monkeypatch, df, params={})
+        assert captured["m"] == 1
+
+    def test_fit_seasonal_false_skips_resolution_silently(self, monkeypatch):
+        # Irregular dates would warn on the auto path; with the seasonal
+        # search off, m is inert and no resolution (or warning) happens.
+        dates = pd.to_datetime(
+            ["2022-01-01", "2022-01-02", "2022-01-05", "2022-01-11",
+             "2022-02-01", "2022-02-03", "2022-03-01", "2022-04-01"])
+        df = pd.DataFrame({"ds": dates, "y": np.ones(len(dates))})
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            captured = self._fit_with_stub(monkeypatch, df,
+                                           params={"seasonal": False})
+        assert captured["m"] == 1
+        assert captured["seasonal"] is False
+
+
+# ===================================================================
 # ProphetXGB-Specific Unit Tests
 # ===================================================================
 class TestProphetXGBSpecific:

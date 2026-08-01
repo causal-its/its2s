@@ -71,7 +71,14 @@ models:
     max_d: 2
     max_q: 5
     seasonal: true
-    m: 7
+    # Seasonal period for auto_arima. "auto" derives the dominant cycle from
+    # the resolved series frequency (daily 7, weekly 52, monthly 12) and falls
+    # back LOUDLY to m=1 (non-seasonal) when the frequency is unmapped or
+    # n_train < 2m. An integer is honored exactly, never substituted: it
+    # warns (but fits as asked) when n_train < 2m. Note the runtime cost:
+    # weekly data resolves m=52 and the seasonal stepwise search can be slow.
+    # GH #59, D-055 pattern.
+    m: auto
     stepwise: true
     suppress_warnings: true
 

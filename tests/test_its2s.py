@@ -61,6 +61,12 @@ class TestSettings:
                 assert section[key] == "auto"
                 assert isinstance(section[key], str)
 
+    def test_default_arima_m_is_auto_string(self, default_config):
+        """GH #59, D-059: the shipped ARIMA m default is the string "auto"."""
+        m = default_config["models"]["arima"]["m"]
+        assert m == "auto"
+        assert isinstance(m, str)
+
     def test_config_override_shallow(self):
         from its2s.settings import load_config
         cfg = load_config(overrides={"bootstrap": {"n_sim": 50}})

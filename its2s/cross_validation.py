@@ -14,6 +14,7 @@ from .frequency import resolve_frequency
 from .metrics.error_metrics import (
     MetricsResult, compute_metrics, resolve_metrics_seasonality,
 )
+from .models.arima import resolve_arima_m
 from .settings import get_model_config, load_config
 
 logger = logging.getLogger(__name__)
@@ -298,6 +299,24 @@ def time_series_cv(df, intervention_date, model_name="arima",
     )
 
     model_params = get_model_config(config, model_name)
+
+    # Resolve ARIMA's seasonal period m once for all folds, guarded against
+    # the SMALLEST training window, for the same reasons as the MASE m above:
+    # a per-fold resolve could flip m between folds as the training window
+    # grows, and any fallback warning would be swallowed by the fold loop's
+    # warning suppression. Injecting the resolved integer keeps every fold's
+    # fit on the silent explicit path (GH #59, D-055 pattern).
+    if (model_name == "arima"
+            and model_params.get("m", "auto") == "auto"
+            and model_params.get("seasonal", True)):
+        arima_freq = (series_freq if series_freq is not None
+                      else resolve_frequency(cv_df[date_col]))
+        model_params["m"] = resolve_arima_m(
+            "auto", n_train=min_train_obs, series_freq=arima_freq,
+        )
+        logger.info("CV: ARIMA seasonal period fixed at m=%d for all folds",
+                    model_params["m"])
+
     fold_results = []
 
     # Non-overlapping fold layout: each fold's test window starts at

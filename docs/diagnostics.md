@@ -91,8 +91,9 @@ always reported in `ljung_box_lags`.
   `2m` anyway would destroy the test's power.
 
 **Action**: try a different model (`compare_models()`), add covariates that explain
-the remaining structure, or verify that the seasonal period (`m` for ARIMA) is
-correctly specified.
+the remaining structure, or verify that the seasonal period (`m` for ARIMA,
+`"auto"` by default: resolved from the series frequency with a loud non-seasonal
+fallback) is correctly specified.
 
 ---
 
