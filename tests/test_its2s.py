@@ -941,6 +941,102 @@ class TestOutputs:
         loaded = pd.read_csv(path)
         assert len(loaded) == 2
 
+    def _make_diagnostics(self, n=200, alias="D", seed=1):
+        """DiagnosticsResult from synthetic residuals, for writer tests."""
+        from its2s.diagnostics import compute_diagnostics
+        from its2s.frequency import SeriesFrequency
+        from its2s.models.base import FitResult
+        rng = np.random.default_rng(seed)
+        fr = FitResult(fitted_values=np.ones(n),
+                       residuals=rng.normal(0, 2.0, n))
+        return compute_diagnostics(fr, "test_model",
+                                   SeriesFrequency.from_alias(alias))
+
+    def test_save_diagnostics_table_columns_and_context(self, tmp_path):
+        from its2s.outputs.tables import save_diagnostics_table
+        diag = self._make_diagnostics(n=200, alias="D")
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        assert list(loaded.columns) == [
+            "model_name", "section", "statistic", "lag", "lag_units",
+            "value", "status", "note", "freq_alias", "m", "n",
+        ]
+        assert (loaded["model_name"] == "test_model").all()
+        assert (loaded["freq_alias"] == "D").all()
+        assert (loaded["m"] == 7).all()
+        assert (loaded["n"] == 200).all()
+        acf_rows = loaded[loaded["section"] == "acf"]
+        assert len(acf_rows) == diag.params["max_lag"]
+        assert (acf_rows["lag_units"] == "observations").all()
+
+    def test_save_diagnostics_table_roundtrip_acf_values(self, tmp_path):
+        from its2s.outputs.tables import save_diagnostics_table
+        diag = self._make_diagnostics(n=200, alias="D")
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        acf_rows = loaded[loaded["section"] == "acf"].set_index("lag")
+        assert (acf_rows["status"] == "ok").all()
+        for lag, val in diag.acf.items():
+            assert acf_rows.loc[lag, "value"] == pytest.approx(val)
+
+    def test_save_diagnostics_table_shapiro_not_computed(self, tmp_path):
+        from its2s.outputs.tables import save_diagnostics_table
+        diag = self._make_diagnostics(n=6000, alias="D")
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        sh = loaded[loaded["section"] == "shapiro"]
+        assert len(sh) == 2
+        assert (sh["status"] == "not_computed").all()
+        assert sh["value"].isna().all()
+        assert (sh["note"] == "n outside 3..5000").all()
+
+    def test_save_diagnostics_table_ljungbox_short_n(self, tmp_path):
+        from its2s.outputs.tables import save_diagnostics_table
+        # n = 12: Ljung-Box is skipped (n <= 15) and even lag 1 exceeds
+        # max_lag = 0, so the key-lag warning fires during computation.
+        with pytest.warns(UserWarning, match="key lag"):
+            diag = self._make_diagnostics(n=12, alias="D")
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        lb = loaded[loaded["section"] == "ljung_box"]
+        assert len(lb) == 3
+        assert (lb["status"] == "not_computed").all()
+        assert lb["value"].isna().all()
+        assert lb["note"].str.contains("n <= 15").all()
+
+    def test_save_diagnostics_table_key_lag_unreachable(self, tmp_path):
+        from its2s.outputs.tables import save_diagnostics_table
+        # weekly n = 60: max_lag = 30 < 52, the annual key lag is present
+        # in the file but marked not_computed with the reason
+        with pytest.warns(UserWarning, match="key lag 52"):
+            diag = self._make_diagnostics(n=60, alias="W-SUN")
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        row52 = loaded[(loaded["section"] == "acf") & (loaded["lag"] == 52)]
+        assert len(row52) == 1
+        assert row52["status"].iloc[0] == "not_computed"
+        assert "max_lag=30" in row52["note"].iloc[0]
+        row1 = loaded[(loaded["section"] == "acf") & (loaded["lag"] == 1)]
+        assert row1["status"].iloc[0] == "ok"
+
+    def test_save_diagnostics_table_unmapped_freq(self, tmp_path):
+        from its2s.outputs.tables import save_diagnostics_table
+        with pytest.warns(UserWarning, match="No dominant seasonal period"):
+            diag = self._make_diagnostics(n=200, alias="QS-JAN")
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        assert loaded["m"].isna().all()
+        assert (loaded["freq_alias"] == "QS-JAN").all()
+        acf_rows = loaded[loaded["section"] == "acf"]
+        assert (acf_rows["lag_units"] == "observations").all()
+        assert (acf_rows["status"] == "ok").all()
+
     def test_pipeline_result_summary_is_string(self):
         pr, _, _ = self._make_minimal_pipeline_result()
         summary = pr.summary()

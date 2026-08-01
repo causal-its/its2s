@@ -20,7 +20,10 @@ from .metrics.error_metrics import (
 )
 from .metrics.excess import ExcessResult, calc_ate_summary, calculate_excess
 from .outputs.plots import plot_counterfactual
-from .outputs.tables import save_ate_summary, save_excess_table, save_metrics_table
+from .outputs.tables import (
+    save_ate_summary, save_diagnostics_table, save_excess_table,
+    save_metrics_table,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -409,6 +412,7 @@ def run_single_its(
             {"train": metrics_train, "test": metrics_test},
             out / f"{model_name}_metrics.csv",
         )
+        save_diagnostics_table(diag, out / f"{model_name}_diagnostics.csv")
         if not excess_table.obs_excess.empty:
             ate = calc_ate_summary(excess_table)
             save_ate_summary(ate, out / f"{model_name}_ate_summary.csv")

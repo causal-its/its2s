@@ -113,6 +113,42 @@ unreliable.
 
 ---
 
+### `{model}_diagnostics.csv` — residual diagnostics (tidy long format)
+
+One row per diagnostic statistic; the full persisted ACF vector gets one row per
+lag. The resolved series frequency, the seasonal period `m`, and the residual
+count `n` repeat on every row, so each value is self-describing: a lag is always
+in observations of the resolved frequency (on weekly data, lag 52 is 52 weeks),
+never calendar days.
+
+These diagnostics describe the train-only fit: the model fit on the training
+window whose residuals are available before the event (GH #63 tracks the final
+refit; once it lands, this file follows the final fit automatically).
+
+| Column | Description |
+|--------|-------------|
+| `model_name` | Model the residuals come from |
+| `section` | Row group: `summary`, `acf`, `ljung_box`, `shapiro`, or `params` |
+| `statistic` | Statistic name (e.g., `residual_mean`, `acf`, `ljung_box_pvalue`, `shapiro_stat`, `max_lag`) |
+| `lag` | Lag for `acf` rows; empty otherwise |
+| `lag_units` | `observations` on lag-bearing rows (`acf`, `ljung_box_lags`, `max_lag`); empty otherwise |
+| `value` | The statistic's value; empty when `status` is not `ok` |
+| `status` | `ok` (computed, finite), `nan` (computed, result NaN), or `not_computed` (a precondition failed, e.g. the series is too short) |
+| `note` | The reason on non-`ok` rows (e.g. `n <= 15: Ljung-Box skipped`, `key lag 52 exceeds max_lag=30`) |
+| `freq_alias` | Resolved pandas frequency alias of the series (e.g. `D`, `W-SUN`) |
+| `m` | Dominant seasonal period in observations (daily 7, weekly 52, monthly 12); empty when the frequency has no mapped cycle |
+| `n` | Number of residuals after dropping NaNs |
+
+`status` is the column to check before reading `value`: an empty `value` cell
+alone does not distinguish a statistic that failed its precondition from one
+that was computed and returned NaN.
+
+**How to use**: the key lags `{1, m}` carry the pre-specified checks (see
+[Diagnostics](diagnostics.md)); the rest of the ACF rows are the descriptive
+record that makes structure at unexpected lags visible in the file itself.
+
+---
+
 ### `{model}_counterfactual.png` — visual assessment
 
 Displays the full observed outcome series alongside the counterfactual prediction with
