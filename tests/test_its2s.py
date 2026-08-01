@@ -1042,6 +1042,31 @@ class TestOutputs:
         assert (acf_rows["lag_units"] == "observations").all()
         assert (acf_rows["status"] == "ok").all()
 
+    def test_weekly_diagnostics_csv_surfaces_annual_lag(self, tmp_path):
+        # Acceptance for GH #64/#65: on a weekly series with annual
+        # residual structure, the persisted CSV carries the lag-52 value
+        # that the pre-#64 outputs (scalars at daily-shaped lags) hid.
+        from its2s.diagnostics import compute_diagnostics
+        from its2s.frequency import SeriesFrequency
+        from its2s.models.base import FitResult
+        from its2s.outputs.tables import save_diagnostics_table
+        rng = np.random.default_rng(11)
+        n = 260
+        t = np.arange(n, dtype=float)
+        residuals = 5.0 * np.sin(2 * np.pi * t / 52) + rng.normal(0, 1.0, n)
+        fr = FitResult(fitted_values=np.ones(n), residuals=residuals)
+        diag = compute_diagnostics(fr, "test_model",
+                                   SeriesFrequency.from_alias("W-SUN"))
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        row52 = loaded[(loaded["section"] == "acf") & (loaded["lag"] == 52)]
+        assert len(row52) == 1
+        assert row52["status"].iloc[0] == "ok"
+        assert abs(row52["value"].iloc[0]) > 0.4
+        assert row52["lag_units"].iloc[0] == "observations"
+        assert row52["m"].iloc[0] == 52
+
     def test_plot_residual_acf_saves(self, tmp_path):
         from its2s.outputs.diagnostic_plots import plot_residual_acf
         _, diag = self._make_fit_and_diag(n=200, alias="D")
