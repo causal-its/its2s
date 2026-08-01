@@ -7,7 +7,7 @@ import pandas as pd
 from prophet import Prophet
 from xgboost import XGBRegressor
 
-from .base import BaseModel, FitResult, PredictionResult
+from .base import BaseModel, FitResult, PredictionResult, warn_if_auto_yearly_disabled
 from .utils import make_time_features as _make_time_features
 
 
@@ -35,8 +35,10 @@ class ProphetXGBHybridModel(BaseModel):
         prophet_df.columns = ["ds", "y"]
         prophet_df["ds"] = pd.to_datetime(prophet_df["ds"])
 
+        yearly = p_params.get("yearly_seasonality", "auto")
+        warn_if_auto_yearly_disabled(prophet_df, yearly)
         self._prophet = Prophet(
-            yearly_seasonality=p_params.get("yearly_seasonality", True),
+            yearly_seasonality=yearly,
             weekly_seasonality=p_params.get("weekly_seasonality", "auto"),
             daily_seasonality=p_params.get("daily_seasonality", False),
             changepoint_prior_scale=p_params.get("changepoint_prior_scale", 0.05),

@@ -51,14 +51,15 @@ class TestSettings:
         assert default_config["data"]["target_col"] == "y"
         assert default_config["data"]["date_col"] == "ds"
 
-    def test_default_weekly_seasonality_is_auto_string(self, default_config):
-        """GH #60: the shipped default is the string "auto", not a YAML bool."""
+    def test_default_seasonality_flags_are_auto_strings(self, default_config):
+        """GH #60, D-057: the shipped defaults are the string "auto", not YAML bools."""
         models = default_config["models"]
         for section in (models["prophet_xgb"]["prophet"],
                         models["prophet_then_xgb"]["prophet"],
                         models["neuralprophet"]):
-            assert section["weekly_seasonality"] == "auto"
-            assert isinstance(section["weekly_seasonality"], str)
+            for key in ("weekly_seasonality", "yearly_seasonality"):
+                assert section[key] == "auto"
+                assert isinstance(section[key], str)
 
     def test_config_override_shallow(self):
         from its2s.settings import load_config

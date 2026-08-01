@@ -30,7 +30,7 @@ periods:
 models:
   prophet_xgb:
     prophet:
-      yearly_seasonality: true
+      yearly_seasonality: auto  # disabled with a visible warning when history spans < 730 days; GH #60, D-057
       weekly_seasonality: auto  # Prophet's spacing rule: off when observations are >= 7 days apart; GH #60
       daily_seasonality: false
       changepoint_prior_scale: 0.05
@@ -45,7 +45,7 @@ models:
 
   prophet_then_xgb:
     prophet:
-      yearly_seasonality: true
+      yearly_seasonality: auto  # disabled with a visible warning when history spans < 730 days; GH #60, D-057
       weekly_seasonality: auto  # Prophet's spacing rule: off when observations are >= 7 days apart; GH #60
       daily_seasonality: false
       changepoint_prior_scale: 0.05
@@ -60,7 +60,7 @@ models:
 
   neuralprophet:
     n_lags: 14
-    yearly_seasonality: true
+    yearly_seasonality: auto  # disabled with a visible warning when history spans < 730 days; GH #60, D-057
     weekly_seasonality: auto  # same rule as Prophet's, verified in neuralprophet 0.8.0; GH #60
     learning_rate: 0.01
     epochs: 100

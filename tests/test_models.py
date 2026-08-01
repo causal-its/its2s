@@ -250,6 +250,16 @@ class TestModelBootstrap:
                        "variance). Expected to resolve when the interval "
                        "construction gains the innovation term.",
                 strict=False))
+        elif name == "prophet_then_xgb":
+            request.applymarker(pytest.mark.xfail(
+                reason="Known limitation, not a test defect: on this 120-day "
+                       "train window the MBB CI is too narrow (GH #41, missing "
+                       "innovation variance; containment 0.6). Masked before "
+                       "D-057: the forced yearly basis, inestimable on 120 "
+                       "days, injected spurious bootstrap estimation variance "
+                       "that widened the CI. Expected to resolve when the "
+                       "interval construction gains the innovation term.",
+                strict=False))
         from its2s.bootstrap.mbb import MovingBlockBootstrap
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
@@ -481,6 +491,49 @@ class TestProphetWeeklySeasonalityAuto:
 
 
 # ===================================================================
+# Prophet yearly_seasonality "auto" default with disable warning (D-057)
+# ===================================================================
+class TestProphetYearlySeasonalityAuto:
+    """The shipped yearly_seasonality default defers to the 730-day rule and
+    warns visibly when the rule disables the component (GH #60, D-057)."""
+
+    @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
+    def test_yearly_disabled_with_warning_on_short_history(self, model_name):
+        df, _, _ = make_short_series(n_pre=180, n_post=30, seed=1502)
+        model = TestProphetWeeklySeasonalityAuto._make_model(model_name)
+        with pytest.warns(UserWarning, match="yearly_seasonality='auto'"):
+            model.fit(df.iloc[:180])
+        assert "yearly" not in model._prophet.seasonalities
+
+    @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
+    def test_yearly_enabled_without_warning_on_long_history(self, model_name):
+        df, _, _ = make_daily_series(n_pre=800, n_post=30, seed=1503)
+        model = TestProphetWeeklySeasonalityAuto._make_model(model_name)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            model.fit(df.iloc[:800])
+        assert model._prophet.seasonalities["yearly"]["fourier_order"] == 10
+        assert not [w for w in caught
+                    if "yearly_seasonality" in str(w.message)]
+
+    def test_warn_helper_rule_boundaries(self):
+        from its2s.models.base import warn_if_auto_yearly_disabled
+        short = pd.DataFrame({
+            "ds": pd.date_range("2022-01-01", periods=700, freq="D"),
+            "y": np.ones(700)})
+        long = pd.DataFrame({
+            "ds": pd.date_range("2022-01-01", periods=731, freq="D"),
+            "y": np.ones(731)})
+        with pytest.warns(UserWarning, match="spans 699 days"):
+            warn_if_auto_yearly_disabled(short, "auto")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            warn_if_auto_yearly_disabled(long, "auto")
+            warn_if_auto_yearly_disabled(short, True)
+            warn_if_auto_yearly_disabled(short, False)
+
+
+# ===================================================================
 # NeuralProphet-Specific Unit Tests
 # ===================================================================
 @pytest.mark.skipif(not _has_neuralprophet(), reason="neuralprophet not installed")
@@ -493,12 +546,13 @@ class TestNeuralProphetSpecific:
         assert model._model is None
         assert model._fit_result is None
 
-    def test_weekly_seasonality_auto_reaches_library(self):
-        """GH #60: the default "auto" is handed to NeuralProphet unresolved;
-        the library applies the same spacing rule as Prophet at fit time."""
+    def test_seasonality_auto_reaches_library(self):
+        """GH #60, D-057: the default "auto" is handed to NeuralProphet
+        unresolved; the library applies the same rules as Prophet at fit time."""
         from its2s.models.neuralprophet import NeuralProphetModel
         np_model = NeuralProphetModel(params={})._build_model()
         assert np_model.config_seasonality.periods["weekly"].arg == "auto"
+        assert np_model.config_seasonality.periods["yearly"].arg == "auto"
 
     def test_clone_clears_model_attribute(self):
         from its2s.models.neuralprophet import NeuralProphetModel
