@@ -2,9 +2,9 @@
 # Execute all tutorial notebooks in understanding_its2s/ with outputs stored in place.
 # Run from the repo root.
 #
-# Prerequisites:
-#   pip install -e ".[neural]"
-#   pip install jupyter nbconvert
+# Prerequisites (either documented setup path):
+#   conda env create -f environment.yml && conda activate its2s
+#   ...or, in a venv:  pip install -e ".[neural,tutorials]"
 set -euo pipefail
 
 TUTORIALS="understanding_its2s"

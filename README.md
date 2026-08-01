@@ -18,7 +18,11 @@ conda env create -f environment.yml
 conda activate its2s
 ```
 
-…or, without conda, `python -m venv .venv && source .venv/bin/activate && pip install -e .`
+…or, without conda, `python3 -m venv venv && source venv/bin/activate && pip install -e .`
+
+Optional extras: `[neural]` (NeuralProphet + PyTorch), `[dev]` (pytest), `[docs]`
+(MkDocs site), `[tutorials]` (re-executing the notebooks in `understanding_its2s/`
+via `scripts/execute_tutorials.sh`).
 
 ## Public API quick reference
 
