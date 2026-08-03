@@ -35,6 +35,13 @@ docs = [
     "mkdocstrings[python]>=0.25",
     "pymdown-extensions>=10.0",
 ]
+# Re-executing the understanding_its2s/ notebooks (scripts/execute_tutorials.sh).
+# Bounds match mkdocs-jupyter's own constraints so [docs] and [tutorials] resolve
+# together; the docs build already needs nbconvert to render the notebooks.
+tutorials = [
+    "nbconvert>=7.2,<8",
+    "ipykernel>=6.0,<8",
+]
 
 [tool.pytest.ini_options]
 markers = ["slow: long-running statistical validation tests"]
