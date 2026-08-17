@@ -11,11 +11,14 @@
 import warnings
 from pathlib import Path
 
+# Figures are built with the object-oriented API (matplotlib.figure.Figure),
+# never pyplot: importing this module must not switch the host process
+# backend (a module-level matplotlib.use("Agg") clobbers notebook inline
+# rendering). savefig to PNG attaches an Agg canvas on its own, so file
+# output needs no backend selection.
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 
 from .plots import _resolve_plot_colors
 
@@ -40,7 +43,6 @@ def _finish(fig, save_path, dpi):
     fig.tight_layout()
     if save_path:
         fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
-        plt.close(fig)
     return fig
 
 
@@ -125,7 +127,8 @@ def plot_residual_acf(diag, save_path=None, config=None):
     freq_alias = params.get("freq_alias")
     model_name = diag.model_metadata.get("model_name", "model")
 
-    fig, ax = plt.subplots(figsize=(12, 5))
+    fig = Figure(figsize=(12, 5))
+    ax = fig.subplots()
     ax.set_title(f"Residual ACF (train-only fit) - {model_name}",
                  fontsize=style["title_fontsize"])
 
@@ -177,7 +180,8 @@ def plot_residual_pacf(diag, fit_result, save_path=None, config=None):
     n = len(residuals)
     nlags = min(params.get("max_lag", 0), n // 2 - 1)
 
-    fig, ax = plt.subplots(figsize=(12, 5))
+    fig = Figure(figsize=(12, 5))
+    ax = fig.subplots()
     ax.set_title(f"Residual PACF (train-only fit) - {model_name}",
                  fontsize=style["title_fontsize"])
 
@@ -236,7 +240,8 @@ def plot_residuals_over_time(fit_result, splits, save_path=None, config=None):
         x = np.arange(len(residuals))
         xlabel = "Observation index"
 
-    fig, ax = plt.subplots(figsize=(14, 4))
+    fig = Figure(figsize=(14, 4))
+    ax = fig.subplots()
     ax.axhline(0.0, color="black", linewidth=0.8, linestyle="--")
     ax.plot(x, residuals, color=style["colors"]["fit"], linewidth=0.9,
             marker=".", markersize=3)
@@ -265,7 +270,8 @@ def plot_residual_qq(fit_result, save_path=None, config=None):
     residuals = residuals[~np.isnan(residuals)]
     n = len(residuals)
 
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig = Figure(figsize=(6, 6))
+    ax = fig.subplots()
     ax.set_title("Residual normal QQ (train-only fit)",
                  fontsize=style["title_fontsize"])
 
