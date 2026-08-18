@@ -228,3 +228,32 @@ config_overrides = {
 
 Inside `tune_model`, the search space also accepts double-underscore flattened keys
 for nested model parameters (e.g., `"xgb__max_depth"` for XGBoost's `max_depth`).
+
+**Why did my yearly seasonality disappear (or appear) when I changed the date range?**
+
+The Prophet-backed models ship `yearly_seasonality: auto`, and both Prophet and
+NeuralProphet resolve `auto` with the same rule: the yearly component is enabled only
+when the training history spans at least 730 days (two annual cycles). This is a hard
+boundary, not a gradual taper. A training window spanning 729 days gets no yearly
+component; one spanning 730 days gets a full one, at Fourier order 10.
+
+That matters most for a common setup: roughly two years of daily pre-period data. If
+your series has genuine annual structure and the component is disabled, the seasonal
+signal does not disappear -- it loads onto the trend instead, and the counterfactual
+forecast extrapolates that contaminated trend. The estimated effect absorbs the
+season, biased in whichever direction the season was moving at the intervention.
+
+its2s therefore reports the resolution in BOTH directions, as a `UserWarning` naming
+the observed span, the rule, and the override, so you can always see which side of
+the boundary your series landed on. Override the rule explicitly when you know your
+series better than the day count does:
+
+```python
+config_overrides = {
+    "models": {"prophet_xgb": {"prophet": {"yearly_seasonality": True}}},
+}
+```
+
+An explicit `True` or `False` is honored silently -- the report is only for `auto`.
+Setting it explicitly is the right move whenever your training window sits near 730
+days, in either direction.

@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from neuralprophet import NeuralProphet, set_log_level
 
-from .base import BaseModel, FitResult, PredictionResult, warn_if_auto_yearly_disabled
+from .base import BaseModel, FitResult, PredictionResult, report_auto_yearly_resolution
 from ..frequency import resolve_frequency
 
 
@@ -60,7 +60,7 @@ class NeuralProphetModel(BaseModel):
 
         self._model = self._build_model()
         np_df = self._prep_df(train_df, date_col, target_col, covariate_cols)
-        warn_if_auto_yearly_disabled(
+        report_auto_yearly_resolution(
             np_df, self.params.get("yearly_seasonality", "auto"))
 
         if covariate_cols:

@@ -15,14 +15,21 @@ import pandas as pd
 _YEARLY_AUTO_MIN_DAYS = 730
 
 
-def warn_if_auto_yearly_disabled(df, yearly_arg):
-    """Warn visibly when the library's auto rule will disable yearly seasonality.
+def report_auto_yearly_resolution(df, yearly_arg):
+    """Report visibly which way the library's auto rule resolves yearly seasonality.
 
     Prophet and NeuralProphet apply the identical rule: under "auto", the
     yearly component is enabled only when the non-null training history spans
-    at least 730 days. The libraries announce the disable with a quiet log
-    line; this surfaces it as a warning so the change to the user's model is
-    never silent (GH #60, D-057). df must carry ds and y columns.
+    at least 730 days. The libraries decide this quietly, with at most a log
+    line, so a series one day either side of the threshold gets a materially
+    different model with nothing in the output to say so (GH #60, D-057,
+    D-080). This reports the resolution in BOTH directions, so the choice is
+    always visible rather than only visible when it goes badly.
+
+    An explicit True/False is honored silently: the user made the choice, so
+    there is nothing to report. Only "auto" is announced.
+
+    df must carry ds and y columns.
     """
     if yearly_arg != "auto":
         return
@@ -35,7 +42,20 @@ def warn_if_auto_yearly_disabled(df, yearly_arg):
             f"yearly_seasonality='auto': the training history spans "
             f"{span_days} days, under the {_YEARLY_AUTO_MIN_DAYS}-day "
             f"(two annual cycles) minimum, so the yearly component is "
-            f"disabled. Pass yearly_seasonality=True to force it."
+            f"DISABLED. This threshold is a hard boundary: a series near it "
+            f"can change substantially on one more day of history. Pass "
+            f"yearly_seasonality=True to force the component on.",
+            UserWarning,
+            stacklevel=2,
+        )
+    else:
+        warnings.warn(
+            f"yearly_seasonality='auto': the training history spans "
+            f"{span_days} days, at or over the {_YEARLY_AUTO_MIN_DAYS}-day "
+            f"(two annual cycles) minimum, so the yearly component is "
+            f"ENABLED. Pass yearly_seasonality=False to suppress it.",
+            UserWarning,
+            stacklevel=2,
         )
 
 

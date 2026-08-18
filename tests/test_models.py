@@ -646,11 +646,17 @@ class TestProphetWeeklySeasonalityAuto:
 
 
 # ===================================================================
-# Prophet yearly_seasonality "auto" default with disable warning (D-057)
+# Prophet yearly_seasonality "auto" default, reported both ways (D-057, D-080)
 # ===================================================================
 class TestProphetYearlySeasonalityAuto:
     """The shipped yearly_seasonality default defers to the 730-day rule and
-    warns visibly when the rule disables the component (GH #60, D-057)."""
+    reports the resolution visibly in BOTH directions (GH #60, D-057, D-080).
+
+    The rule is a hard boundary on a continuous quantity: one day of history
+    either side of it produces a materially different model. D-080 made the
+    resolution always visible rather than visible only on disable, so a user
+    near the boundary can see which side they landed on.
+    """
 
     @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
     def test_yearly_disabled_with_warning_on_short_history(self, model_name):
@@ -661,18 +667,20 @@ class TestProphetYearlySeasonalityAuto:
         assert "yearly" not in model._prophet.seasonalities
 
     @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
-    def test_yearly_enabled_without_warning_on_long_history(self, model_name):
+    def test_yearly_enabled_with_warning_on_long_history(self, model_name):
         df, _, _ = make_daily_series(n_pre=800, n_post=30, seed=1503)
         model = TestProphetWeeklySeasonalityAuto._make_model(model_name)
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+        with pytest.warns(UserWarning, match="ENABLED"):
             model.fit(df.iloc[:800])
         assert model._prophet.seasonalities["yearly"]["fourier_order"] == 10
-        assert not [w for w in caught
-                    if "yearly_seasonality" in str(w.message)]
 
-    def test_warn_helper_rule_boundaries(self):
-        from its2s.models.base import warn_if_auto_yearly_disabled
+    def test_report_helper_rule_boundaries(self):
+        """The helper's own boundary, hit directly.
+
+        Note periods=N spans N-1 days: that off-by-one is exactly what put the
+        730-row effect-recovery fixture one day under the threshold (D-079).
+        """
+        from its2s.models.base import report_auto_yearly_resolution
         short = pd.DataFrame({
             "ds": pd.date_range("2022-01-01", periods=700, freq="D"),
             "y": np.ones(700)})
@@ -680,12 +688,38 @@ class TestProphetYearlySeasonalityAuto:
             "ds": pd.date_range("2022-01-01", periods=731, freq="D"),
             "y": np.ones(731)})
         with pytest.warns(UserWarning, match="spans 699 days"):
-            warn_if_auto_yearly_disabled(short, "auto")
+            report_auto_yearly_resolution(short, "auto")
+        with pytest.warns(UserWarning, match="spans 730 days"):
+            report_auto_yearly_resolution(long, "auto")
+        # An explicit value is the user's own choice: honored, and silent.
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            warn_if_auto_yearly_disabled(long, "auto")
-            warn_if_auto_yearly_disabled(short, True)
-            warn_if_auto_yearly_disabled(short, False)
+            report_auto_yearly_resolution(short, True)
+            report_auto_yearly_resolution(short, False)
+
+    def test_yearly_cliff_is_where_the_rule_says_and_is_announced(self):
+        """Pin the discontinuity end to end so it cannot move silently.
+
+        Scoped to prophet_xgb: this is new coverage, and prophet_then_xgb is
+        slated for retirement. Asserts WHERE the cliff sits and that both
+        sides announce themselves -- deliberately NOT how large the resulting
+        difference in the estimate is, which would enshrine the behaviour
+        rather than expose it.
+        """
+        model_at = TestProphetWeeklySeasonalityAuto._make_model("prophet_xgb")
+        model_over = TestProphetWeeklySeasonalityAuto._make_model("prophet_xgb")
+
+        # 730 daily rows span 729 days: one day UNDER the threshold.
+        df_under, _, _ = make_daily_series(n_pre=730, n_post=30, seed=1504)
+        with pytest.warns(UserWarning, match="spans 729 days.*DISABLED"):
+            model_at.fit(df_under.iloc[:730])
+        assert "yearly" not in model_at._prophet.seasonalities
+
+        # 731 daily rows span 730 days: exactly AT the threshold.
+        df_over, _, _ = make_daily_series(n_pre=731, n_post=30, seed=1504)
+        with pytest.warns(UserWarning, match="spans 730 days.*ENABLED"):
+            model_over.fit(df_over.iloc[:731])
+        assert model_over._prophet.seasonalities["yearly"]["fourier_order"] == 10
 
 
 # ===================================================================
@@ -960,6 +994,17 @@ class TestModelStatistical:
 
     These tests use n_sim=50 and are marked @pytest.mark.slow so they can be
     excluded from fast CI runs with ``-m "not slow"``.
+
+    They deliberately train on a window well clear of the 730-day
+    yearly_seasonality boundary: n_pre=1460 minus the 365-day test window
+    leaves 1095 training rows spanning 1094 days. At the previous default
+    (n_pre=1095) the window was 730 rows spanning 729 days -- one day UNDER
+    the threshold -- so yearly seasonality was dropped, and since this
+    fixture's seasonal amplitude equals the planted effect exactly, the
+    omitted season loaded onto the trend and was read as intervention effect
+    (D-079: a planted 10.0 recovered as 22.99). These tests measure effect
+    recovery; the seasonality boundary is pinned separately in
+    TestProphetYearlySeasonalityAuto. Do not trim n_pre back toward the cliff.
     """
 
     @pytest.mark.slow
@@ -967,8 +1012,8 @@ class TestModelStatistical:
     def test_known_positive_effect_recovery(self, model_name):
         from its2s import run_single_its
         from its2s.metrics.excess import calc_ate_summary
-        df, intv, _ = make_daily_series(intervention_effect=10.0, noise_sd=5.0,
-                                         seed=4010)
+        df, intv, _ = make_daily_series(n_pre=1460, intervention_effect=10.0,
+                                         noise_sd=5.0, seed=4010)
         cfg = _e2e_config(model_name, n_sim=50)
         result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                             seed=42, config_overrides=cfg)
@@ -982,8 +1027,8 @@ class TestModelStatistical:
     def test_null_effect_near_zero(self, model_name):
         from its2s import run_single_its
         from its2s.metrics.excess import calc_ate_summary
-        df, intv, _ = make_daily_series(intervention_effect=0.0, noise_sd=5.0,
-                                         seed=4011)
+        df, intv, _ = make_daily_series(n_pre=1460, intervention_effect=0.0,
+                                         noise_sd=5.0, seed=4011)
         cfg = _e2e_config(model_name, n_sim=50)
         result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                             seed=42, config_overrides=cfg)
@@ -997,8 +1042,8 @@ class TestModelStatistical:
     def test_negative_effect_recovery(self, model_name):
         from its2s import run_single_its
         from its2s.metrics.excess import calc_ate_summary
-        df, intv, _ = make_daily_series(intervention_effect=-8.0, noise_sd=5.0,
-                                         seed=4012)
+        df, intv, _ = make_daily_series(n_pre=1460, intervention_effect=-8.0,
+                                         noise_sd=5.0, seed=4012)
         cfg = _e2e_config(model_name, n_sim=50)
         result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                             seed=42, config_overrides=cfg)
