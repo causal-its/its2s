@@ -3,7 +3,9 @@
 #   series is a complete, regularly spaced grid. Observation counts equal
 #   calendar spans only under that assumption, so the resolver fails loudly on
 #   gaps, duplicates, and irregular spacing rather than letting downstream
-#   window arithmetic go silently wrong.
+#   window arithmetic go silently wrong. Also maps a resolved frequency to its
+#   dominant seasonal cycle, the single mapping shared by metrics (MASE m,
+#   GH #62) and diagnostics (key ACF lags and Ljung-Box depth, GH #61, #35).
 # Usage: from its2s.frequency import resolve_frequency, SeriesFrequency
 # Dependencies: pandas
 
@@ -99,6 +101,42 @@ def resolve_frequency(dates):
         _raise_irregular(idx)
 
     return SeriesFrequency.from_alias(alias)
+
+
+# Dominant seasonal cycle per frequency family: the shortest strong cycle on
+# daily data, the annual cycle on weekly and monthly data. This is THE mapping
+# behind seasonality: auto for metrics and the key ACF lag set for diagnostics;
+# a second mapping anywhere else would drift.
+_DOMINANT_CYCLES = {
+    "D": 7,    # daily: day-of-week
+    "W": 52,   # weekly: annual
+    "M": 12,   # monthly: annual
+    "MS": 12,
+    "ME": 12,
+}
+
+
+def dominant_seasonal_period(series_freq):
+    """Return the dominant seasonal period m for a resolved frequency.
+
+    Parameters
+    ----------
+    series_freq : SeriesFrequency or None
+        Output of resolve_frequency. None is accepted and returns None, so
+        callers can treat "no frequency" and "no mapping" identically.
+
+    Returns
+    -------
+    int or None
+        The dominant cycle in observations (daily 7, weekly 52, monthly 12),
+        or None when the frequency has no mapped cycle (e.g. quarterly,
+        hourly). Callers must handle None loudly, never by silently
+        substituting a period.
+    """
+    if series_freq is None:
+        return None
+    family = series_freq.alias.split("-")[0]
+    return _DOMINANT_CYCLES.get(family)
 
 
 def _raise_irregular(idx):

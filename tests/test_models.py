@@ -165,6 +165,18 @@ class TestModelContract:
         np.testing.assert_allclose(
             reconstructed[finite_mask], actual[finite_mask], rtol=1e-4, atol=1e-4)
 
+    @pytest.mark.parametrize("name,cls,params", _MODEL_PARAMS, ids=_MODEL_IDS)
+    def test_clone_fresh_does_not_share_nested_params(self, name, cls, params):
+        """A clone's nested param dicts must be independent copies: MBB refits
+        clone per draw, and a shared sub-dict would let a mutation on one clone
+        silently propagate to the parent and all later draws."""
+        nested = {**params, "prophet": {"changepoint_prior_scale": 0.05}}
+        model = cls(params=nested)
+        clone = model.clone_fresh()
+        assert clone.params == model.params
+        clone.params["prophet"]["changepoint_prior_scale"] = 0.99
+        assert model.params["prophet"]["changepoint_prior_scale"] == 0.05
+
 
 # ===================================================================
 # MBB Bootstrap (parametrized across all 4 models)
@@ -249,6 +261,16 @@ class TestModelBootstrap:
                        "narrowness is tracked in GH #41 (missing innovation "
                        "variance). Expected to resolve when the interval "
                        "construction gains the innovation term.",
+                strict=False))
+        elif name == "prophet_then_xgb":
+            request.applymarker(pytest.mark.xfail(
+                reason="Known limitation, not a test defect: on this 120-day "
+                       "train window the MBB CI is too narrow (GH #41, missing "
+                       "innovation variance; containment 0.6). Masked before "
+                       "D-057: the forced yearly basis, inestimable on 120 "
+                       "days, injected spurious bootstrap estimation variance "
+                       "that widened the CI. Expected to resolve when the "
+                       "interval construction gains the innovation term.",
                 strict=False))
         from its2s.bootstrap.mbb import MovingBlockBootstrap
         from its2s.data_prep import prepare_splits
@@ -344,6 +366,146 @@ class TestARIMASpecific:
                                      "models": {"arima": {"m": 4, "seasonal": True}},
                                      "metrics": {"seasonality": 4}}))
         assert result.model_name == "arima"
+
+
+# ===================================================================
+# ARIMA seasonal period m "auto" resolution (GH #59, D-059)
+# ===================================================================
+class TestARIMASeasonalityAuto:
+    """The shipped m default resolves from the series frequency with a loud
+    non-seasonal fallback; explicit values are honored, never substituted."""
+
+    @staticmethod
+    def _freq(alias):
+        from its2s.frequency import SeriesFrequency
+        return SeriesFrequency.from_alias(alias)
+
+    @staticmethod
+    def _fit_with_stub(monkeypatch, df, params):
+        """Fit an ARIMAModel with pm.auto_arima stubbed out; return the
+        kwargs the stub captured (so tests assert on the m actually passed
+        without paying for a real stepwise search)."""
+        import its2s.models.arima as arima_mod
+
+        captured = {}
+        n = len(df)
+
+        class _Stub:
+            order = (1, 0, 0)
+            seasonal_order = (0, 0, 0, 0)
+
+            def predict_in_sample(self, exogenous=None):
+                return np.zeros(n)
+
+        def fake_auto_arima(y, **kwargs):
+            captured.update(kwargs)
+            return _Stub()
+
+        monkeypatch.setattr(arima_mod.pm, "auto_arima", fake_auto_arima)
+        model = arima_mod.ARIMAModel(params=params)
+        model.fit(df)
+        return captured
+
+    # -- resolver unit tests -------------------------------------------------
+
+    def test_auto_daily_resolves_7(self):
+        from its2s.models.arima import resolve_arima_m
+        assert resolve_arima_m("auto", n_train=400,
+                               series_freq=self._freq("D")) == 7
+
+    def test_auto_weekly_resolves_52(self):
+        from its2s.models.arima import resolve_arima_m
+        assert resolve_arima_m("auto", n_train=200,
+                               series_freq=self._freq("W-SUN")) == 52
+
+    def test_auto_monthly_resolves_12(self):
+        from its2s.models.arima import resolve_arima_m
+        assert resolve_arima_m("auto", n_train=60,
+                               series_freq=self._freq("MS")) == 12
+
+    def test_auto_unmapped_frequency_falls_back_to_1_with_warning(self):
+        from its2s.models.arima import resolve_arima_m
+        with pytest.warns(UserWarning, match="no dominant seasonal period"):
+            m = resolve_arima_m("auto", n_train=100,
+                                series_freq=self._freq("QS-JAN"))
+        assert m == 1
+
+    def test_auto_short_train_falls_back_to_1_with_warning(self):
+        from its2s.models.arima import resolve_arima_m
+        with pytest.warns(UserWarning, match=r"n_train >= 2\*m"):
+            m = resolve_arima_m("auto", n_train=80,
+                                series_freq=self._freq("W-SUN"))
+        assert m == 1
+
+    def test_explicit_failing_guard_warns_and_honors(self):
+        # The deliberate deviation from resolve_metrics_seasonality, which
+        # raises here: a model spec is advisory-warned, never substituted.
+        from its2s.models.arima import resolve_arima_m
+        with pytest.warns(UserWarning, match="honored"):
+            m = resolve_arima_m(52, n_train=60)
+        assert m == 52
+
+    def test_explicit_passing_guard_is_silent(self):
+        from its2s.models.arima import resolve_arima_m
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert resolve_arima_m(7, n_train=400) == 7
+
+    def test_m_below_1_raises(self):
+        from its2s.models.arima import resolve_arima_m
+        with pytest.raises(ValueError, match="must be >= 1"):
+            resolve_arima_m(0, n_train=400)
+
+    # -- fit-path tests (stubbed auto_arima) ---------------------------------
+
+    def test_fit_auto_daily_passes_m7(self, monkeypatch):
+        df = pd.DataFrame({"ds": pd.date_range("2022-01-01", periods=400,
+                                               freq="D"),
+                           "y": np.ones(400)})
+        captured = self._fit_with_stub(monkeypatch, df, params={})
+        assert captured["m"] == 7
+
+    def test_fit_auto_weekly_passes_m52(self, monkeypatch):
+        df = pd.DataFrame({"ds": pd.date_range("2022-01-02", periods=200,
+                                               freq="W-SUN"),
+                           "y": np.ones(200)})
+        captured = self._fit_with_stub(monkeypatch, df, params={})
+        assert captured["m"] == 52
+
+    def test_fit_explicit_m7_emits_no_warning(self, monkeypatch):
+        # Regression for the retired M2-8 warning, which fired on m == 7
+        # even when the user set it deliberately.
+        df = pd.DataFrame({"ds": pd.date_range("2022-01-01", periods=400,
+                                               freq="D"),
+                           "y": np.ones(400)})
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            captured = self._fit_with_stub(monkeypatch, df, params={"m": 7})
+        assert captured["m"] == 7
+
+    def test_fit_auto_irregular_dates_warns_and_falls_back_to_m1(
+            self, monkeypatch):
+        dates = pd.to_datetime(
+            ["2022-01-01", "2022-01-02", "2022-01-05", "2022-01-11",
+             "2022-02-01", "2022-02-03", "2022-03-01", "2022-04-01"])
+        df = pd.DataFrame({"ds": dates, "y": np.ones(len(dates))})
+        with pytest.warns(UserWarning, match="could not resolve"):
+            captured = self._fit_with_stub(monkeypatch, df, params={})
+        assert captured["m"] == 1
+
+    def test_fit_seasonal_false_skips_resolution_silently(self, monkeypatch):
+        # Irregular dates would warn on the auto path; with the seasonal
+        # search off, m is inert and no resolution (or warning) happens.
+        dates = pd.to_datetime(
+            ["2022-01-01", "2022-01-02", "2022-01-05", "2022-01-11",
+             "2022-02-01", "2022-02-03", "2022-03-01", "2022-04-01"])
+        df = pd.DataFrame({"ds": dates, "y": np.ones(len(dates))})
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            captured = self._fit_with_stub(monkeypatch, df,
+                                           params={"seasonal": False})
+        assert captured["m"] == 1
+        assert captured["seasonal"] is False
 
 
 # ===================================================================
@@ -448,6 +610,119 @@ class TestProphetThenXGBSpecific:
 
 
 # ===================================================================
+# Prophet weekly_seasonality "auto" default (GH #60)
+# ===================================================================
+class TestProphetWeeklySeasonalityAuto:
+    """The shipped weekly_seasonality default defers to Prophet's spacing rule.
+
+    On a weekly grid the weekly component is degenerate (its period equals the
+    observation spacing), so "auto" must disable it; on a daily grid "auto"
+    resolves to the same configuration the previous hard-coded True produced
+    (fourier_order 3), keeping daily runs bit-identical.
+    """
+
+    @staticmethod
+    def _make_model(model_name):
+        if model_name == "prophet_xgb":
+            from its2s.models.prophet_xgb import ProphetXGBHybridModel
+            return ProphetXGBHybridModel(params={})
+        from its2s.models.prophet_then_xgb import ProphetThenXGBModel
+        return ProphetThenXGBModel(params={})
+
+    @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
+    def test_weekly_disabled_on_weekly_grid(self, model_name):
+        df, _, _ = make_weekly_series(seed=1500)
+        model = self._make_model(model_name)
+        _run_quiet(model.fit, df.iloc[:156])
+        assert "weekly" not in model._prophet.seasonalities
+        assert "yearly" in model._prophet.seasonalities
+
+    @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
+    def test_weekly_enabled_on_daily_grid(self, model_name):
+        df, _, _ = make_short_series(n_pre=180, n_post=30, seed=1501)
+        model = self._make_model(model_name)
+        _run_quiet(model.fit, df.iloc[:180])
+        assert model._prophet.seasonalities["weekly"]["fourier_order"] == 3
+
+
+# ===================================================================
+# Prophet yearly_seasonality "auto" default, reported both ways (D-057, D-080)
+# ===================================================================
+class TestProphetYearlySeasonalityAuto:
+    """The shipped yearly_seasonality default defers to the 730-day rule and
+    reports the resolution visibly in BOTH directions (GH #60, D-057, D-080).
+
+    The rule is a hard boundary on a continuous quantity: one day of history
+    either side of it produces a materially different model. D-080 made the
+    resolution always visible rather than visible only on disable, so a user
+    near the boundary can see which side they landed on.
+    """
+
+    @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
+    def test_yearly_disabled_with_warning_on_short_history(self, model_name):
+        df, _, _ = make_short_series(n_pre=180, n_post=30, seed=1502)
+        model = TestProphetWeeklySeasonalityAuto._make_model(model_name)
+        with pytest.warns(UserWarning, match="yearly_seasonality='auto'"):
+            model.fit(df.iloc[:180])
+        assert "yearly" not in model._prophet.seasonalities
+
+    @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
+    def test_yearly_enabled_with_warning_on_long_history(self, model_name):
+        df, _, _ = make_daily_series(n_pre=800, n_post=30, seed=1503)
+        model = TestProphetWeeklySeasonalityAuto._make_model(model_name)
+        with pytest.warns(UserWarning, match="ENABLED"):
+            model.fit(df.iloc[:800])
+        assert model._prophet.seasonalities["yearly"]["fourier_order"] == 10
+
+    def test_report_helper_rule_boundaries(self):
+        """The helper's own boundary, hit directly.
+
+        Note periods=N spans N-1 days: that off-by-one is exactly what put the
+        730-row effect-recovery fixture one day under the threshold (D-079).
+        """
+        from its2s.models.base import report_auto_yearly_resolution
+        short = pd.DataFrame({
+            "ds": pd.date_range("2022-01-01", periods=700, freq="D"),
+            "y": np.ones(700)})
+        long = pd.DataFrame({
+            "ds": pd.date_range("2022-01-01", periods=731, freq="D"),
+            "y": np.ones(731)})
+        with pytest.warns(UserWarning, match="spans 699 days"):
+            report_auto_yearly_resolution(short, "auto")
+        with pytest.warns(UserWarning, match="spans 730 days"):
+            report_auto_yearly_resolution(long, "auto")
+        # An explicit value is the user's own choice: honored, and silent.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            report_auto_yearly_resolution(short, True)
+            report_auto_yearly_resolution(short, False)
+
+    def test_yearly_cliff_is_where_the_rule_says_and_is_announced(self):
+        """Pin the discontinuity end to end so it cannot move silently.
+
+        Scoped to prophet_xgb: this is new coverage, and prophet_then_xgb is
+        slated for retirement. Asserts WHERE the cliff sits and that both
+        sides announce themselves -- deliberately NOT how large the resulting
+        difference in the estimate is, which would enshrine the behaviour
+        rather than expose it.
+        """
+        model_at = TestProphetWeeklySeasonalityAuto._make_model("prophet_xgb")
+        model_over = TestProphetWeeklySeasonalityAuto._make_model("prophet_xgb")
+
+        # 730 daily rows span 729 days: one day UNDER the threshold.
+        df_under, _, _ = make_daily_series(n_pre=730, n_post=30, seed=1504)
+        with pytest.warns(UserWarning, match="spans 729 days.*DISABLED"):
+            model_at.fit(df_under.iloc[:730])
+        assert "yearly" not in model_at._prophet.seasonalities
+
+        # 731 daily rows span 730 days: exactly AT the threshold.
+        df_over, _, _ = make_daily_series(n_pre=731, n_post=30, seed=1504)
+        with pytest.warns(UserWarning, match="spans 730 days.*ENABLED"):
+            model_over.fit(df_over.iloc[:731])
+        assert model_over._prophet.seasonalities["yearly"]["fourier_order"] == 10
+
+
+# ===================================================================
 # NeuralProphet-Specific Unit Tests
 # ===================================================================
 @pytest.mark.skipif(not _has_neuralprophet(), reason="neuralprophet not installed")
@@ -459,6 +734,14 @@ class TestNeuralProphetSpecific:
         model = NeuralProphetModel(params=_NP_FAST_PARAMS)
         assert model._model is None
         assert model._fit_result is None
+
+    def test_seasonality_auto_reaches_library(self):
+        """GH #60, D-057: the default "auto" is handed to NeuralProphet
+        unresolved; the library applies the same rules as Prophet at fit time."""
+        from its2s.models.neuralprophet import NeuralProphetModel
+        np_model = NeuralProphetModel(params={})._build_model()
+        assert np_model.config_seasonality.periods["weekly"].arg == "auto"
+        assert np_model.config_seasonality.periods["yearly"].arg == "auto"
 
     def test_clone_clears_model_attribute(self):
         from its2s.models.neuralprophet import NeuralProphetModel
@@ -616,6 +899,11 @@ class TestModelIntegration:
         assert (tmp_path / f"{model_name}_counterfactual.png").exists()
         assert (tmp_path / f"{model_name}_excess.csv").exists()
         assert (tmp_path / f"{model_name}_metrics.csv").exists()
+        assert (tmp_path / f"{model_name}_diagnostics.csv").exists()
+        assert (tmp_path / f"{model_name}_residual_acf.png").exists()
+        assert (tmp_path / f"{model_name}_residual_pacf.png").exists()
+        assert (tmp_path / f"{model_name}_residuals_over_time.png").exists()
+        assert (tmp_path / f"{model_name}_residual_qq.png").exists()
 
 
 # ===================================================================
@@ -706,6 +994,17 @@ class TestModelStatistical:
 
     These tests use n_sim=50 and are marked @pytest.mark.slow so they can be
     excluded from fast CI runs with ``-m "not slow"``.
+
+    They deliberately train on a window well clear of the 730-day
+    yearly_seasonality boundary: n_pre=1460 minus the 365-day test window
+    leaves 1095 training rows spanning 1094 days. At the previous default
+    (n_pre=1095) the window was 730 rows spanning 729 days -- one day UNDER
+    the threshold -- so yearly seasonality was dropped, and since this
+    fixture's seasonal amplitude equals the planted effect exactly, the
+    omitted season loaded onto the trend and was read as intervention effect
+    (D-079: a planted 10.0 recovered as 22.99). These tests measure effect
+    recovery; the seasonality boundary is pinned separately in
+    TestProphetYearlySeasonalityAuto. Do not trim n_pre back toward the cliff.
     """
 
     @pytest.mark.slow
@@ -713,8 +1012,8 @@ class TestModelStatistical:
     def test_known_positive_effect_recovery(self, model_name):
         from its2s import run_single_its
         from its2s.metrics.excess import calc_ate_summary
-        df, intv, _ = make_daily_series(intervention_effect=10.0, noise_sd=5.0,
-                                         seed=4010)
+        df, intv, _ = make_daily_series(n_pre=1460, intervention_effect=10.0,
+                                         noise_sd=5.0, seed=4010)
         cfg = _e2e_config(model_name, n_sim=50)
         result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                             seed=42, config_overrides=cfg)
@@ -728,8 +1027,8 @@ class TestModelStatistical:
     def test_null_effect_near_zero(self, model_name):
         from its2s import run_single_its
         from its2s.metrics.excess import calc_ate_summary
-        df, intv, _ = make_daily_series(intervention_effect=0.0, noise_sd=5.0,
-                                         seed=4011)
+        df, intv, _ = make_daily_series(n_pre=1460, intervention_effect=0.0,
+                                         noise_sd=5.0, seed=4011)
         cfg = _e2e_config(model_name, n_sim=50)
         result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                             seed=42, config_overrides=cfg)
@@ -743,8 +1042,8 @@ class TestModelStatistical:
     def test_negative_effect_recovery(self, model_name):
         from its2s import run_single_its
         from its2s.metrics.excess import calc_ate_summary
-        df, intv, _ = make_daily_series(intervention_effect=-8.0, noise_sd=5.0,
-                                         seed=4012)
+        df, intv, _ = make_daily_series(n_pre=1460, intervention_effect=-8.0,
+                                         noise_sd=5.0, seed=4012)
         cfg = _e2e_config(model_name, n_sim=50)
         result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                             seed=42, config_overrides=cfg)

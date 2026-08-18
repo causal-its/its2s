@@ -103,8 +103,11 @@ is a linear combination of past values, past forecast errors, and seasonal compo
 
 **Limitations**:
 
-- The default seasonal period `m=7` assumes a daily series with a weekly cycle. Override
-  for other frequencies.
+- The seasonal period `m` defaults to `"auto"` (resolved from the series frequency:
+  daily 7, weekly 52, monthly 12, with a loud non-seasonal fallback when the frequency
+  is unmapped or the training window is under `2m`). On weekly data the resolved
+  `m=52` can make the stepwise search substantially slower; set an explicit `m` or
+  `seasonal: false` to trade seasonality for speed.
 - ARIMA cannot capture nonlinear trend or covariate effects. If the pre-event series
   contains structural nonlinearities, ARIMA's counterfactual will be miscalibrated.
 

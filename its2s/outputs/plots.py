@@ -2,10 +2,13 @@
 # Usage: from its2s.outputs.plots import plot_counterfactual
 # Dependencies: matplotlib, pandas
 
+# Figures are built with the object-oriented API (matplotlib.figure.Figure),
+# never pyplot: importing this module must not switch the host process
+# backend (a module-level matplotlib.use("Agg") clobbers notebook inline
+# rendering). savefig to PNG attaches an Agg canvas on its own, so file
+# output needs no backend selection.
 import pandas as pd
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 
 
 _DEFAULT_PLOT_COLORS = {
@@ -65,7 +68,8 @@ def plot_counterfactual(pipeline_result, splits, save_path=None, config=None):
     fr = pipeline_result.fit_result
     intervention = splits.intervention_date
 
-    fig, ax = plt.subplots(figsize=figsize)
+    fig = Figure(figsize=figsize)
+    ax = fig.subplots()
 
     train_dates = pd.to_datetime(splits.train_df[date_col])
 
@@ -121,6 +125,5 @@ def plot_counterfactual(pipeline_result, splits, save_path=None, config=None):
 
     if save_path:
         fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
-        plt.close(fig)
 
     return fig

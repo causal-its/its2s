@@ -53,6 +53,7 @@ _ARIMA_SPACE = {
 }
 
 _NEURALPROPHET_SPACE = {
+    # n_lags bounds are OBSERVATION counts (7..30 rows), not calendar days.
     "n_lags":          (7,     30,   "int",   "linear"),
     "epochs":          (50,    200,  "int",   "linear"),
     "learning_rate":   (0.001, 0.1,  "float", "log"),
@@ -99,7 +100,7 @@ class TuningResult:
         Std dev of CV RMSE across folds for the best combination.
     trials_df : pd.DataFrame
         One row per trial. Columns: ``trial_id``, ``<param cols>``, ``mean_rmse``,
-        ``std_rmse``, ``mean_mae``, ``mean_mape``, ``mean_r2``, ``n_folds_ok``.
+        ``std_rmse``, ``mean_mae``, ``mean_mape``, ``n_folds_ok``.
     n_trials : int
         Number of parameter combinations evaluated.
     n_folds : int
@@ -204,7 +205,6 @@ def _evaluate_trial(
             "std_rmse":   cv_result.std_rmse,
             "mean_mae":   cv_result.mean_mae,
             "mean_mape":  cv_result.mean_mape,
-            "mean_r2":    cv_result.mean_r2,
             "n_folds_ok": len(cv_result.folds),
         }
     except Exception as exc:
@@ -214,7 +214,6 @@ def _evaluate_trial(
             "std_rmse":   float("nan"),
             "mean_mae":   float("inf"),
             "mean_mape":  float("nan"),
-            "mean_r2":    float("nan"),
             "n_folds_ok": 0,
         }
 

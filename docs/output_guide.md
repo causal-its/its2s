@@ -92,21 +92,60 @@ print(ate)
 
 ### `{model}_metrics.csv` — model performance on train and test windows
 
+Each reported metric has one job:
+
 | Column | Description |
 |--------|-------------|
 | `window` | "train" or "test" |
-| `rmse` | Root mean square error |
-| `mae` | Mean absolute error |
-| `mape` | Mean absolute percentage error |
-| `smape` | Symmetric MAPE |
-| `mase` | Mean absolute scaled error |
-| `r2` | R² (coefficient of determination) |
+| `rmse` | Root mean square error: accuracy on the mean, the model-selection metric |
+| `mae` | Mean absolute error: accuracy in native outcome units, robust |
+| `mape` | Mean absolute percentage error: percentage communication. `NaN` (with a warning) when the window contains zero actuals — skipping zeros would silently drop the hardest observations |
+| `mase` | Seasonal-naive benchmark ratio: model MAE over the in-sample MAE of the `m`-period seasonal naive. Below 1 = beats the benchmark. This is a benchmark comparison, not an accuracy metric |
+| `mase_m` | The benchmark period `m`. Derived from the series frequency when `metrics.seasonality` is `"auto"` (daily 7, weekly 52, monthly 12) |
+| `mase_denominator` | The benchmark's in-sample seasonal-naive MAE, in native units. The ratio is meaningless without it |
 
 **How to use**: assess these before interpreting excess estimates. The test window
 performance is the most important signal — it measures how well the model would have
-tracked the outcome in the pre-event period it was not trained on. Poor test R² or
-large test RMSE relative to the outcome's scale indicates that the counterfactual is
+tracked the outcome in the pre-event period it was not trained on. Large test RMSE
+relative to the outcome's scale, or a test MASE near or above 1 (no better than
+carrying forward the last seasonal cycle), indicates that the counterfactual is
 unreliable.
+
+---
+
+### `{model}_diagnostics.csv` — residual diagnostics (tidy long format)
+
+One row per diagnostic statistic; the full persisted ACF vector gets one row per
+lag. The resolved series frequency, the seasonal period `m`, and the residual
+count `n` repeat on every row, so each value is self-describing: a lag is always
+in observations of the resolved frequency (on weekly data, lag 52 is 52 weeks),
+never calendar days.
+
+These diagnostics describe the train-only fit: the model fit on the training
+window whose residuals are available before the event (GH #63 tracks the final
+refit; once it lands, this file follows the final fit automatically).
+
+| Column | Description |
+|--------|-------------|
+| `model_name` | Model the residuals come from |
+| `section` | Row group: `summary`, `acf`, `ljung_box`, `shapiro`, or `params` |
+| `statistic` | Statistic name (e.g., `residual_mean`, `acf`, `ljung_box_pvalue`, `shapiro_stat`, `max_lag`) |
+| `lag` | Lag for `acf` rows; empty otherwise |
+| `lag_units` | `observations` on lag-bearing rows (`acf`, `ljung_box_lags`, `max_lag`); empty otherwise |
+| `value` | The statistic's value; empty when `status` is not `ok` |
+| `status` | `ok` (computed, finite), `nan` (computed, result NaN), or `not_computed` (a precondition failed, e.g. the series is too short) |
+| `note` | The reason on non-`ok` rows (e.g. `n <= 15: Ljung-Box skipped`, `key lag 52 exceeds max_lag=30`) |
+| `freq_alias` | Resolved pandas frequency alias of the series (e.g. `D`, `W-SUN`) |
+| `m` | Dominant seasonal period in observations (daily 7, weekly 52, monthly 12); empty when the frequency has no mapped cycle |
+| `n` | Number of residuals after dropping NaNs |
+
+`status` is the column to check before reading `value`: an empty `value` cell
+alone does not distinguish a statistic that failed its precondition from one
+that was computed and returned NaN.
+
+**How to use**: the key lags `{1, m}` carry the pre-specified checks (see
+[Diagnostics](diagnostics.md)); the rest of the ACF rows are the descriptive
+record that makes structure at unexpected lags visible in the file itself.
 
 ---
 
@@ -120,6 +159,27 @@ check: the observed and predicted lines should track closely before the event. I
 diverge substantially in the pre-event window, the counterfactual is not credible
 regardless of what the numeric metrics show. See [Diagnostics](diagnostics.md) for
 guidance on what to do when the fit is poor.
+
+---
+
+### Residual diagnostic plots — four PNGs per run
+
+Four residual plots are written alongside the counterfactual figure. Like
+`{model}_diagnostics.csv`, they describe the train-only fit until the final
+refit lands (GH #63). See [Diagnostics](diagnostics.md#residual-plots) for how
+to read each one.
+
+| File | Content |
+|------|---------|
+| `{model}_residual_acf.png` | ACF correlogram of the persisted diagnostics vector, key lags `{1, m}` marked, 95% white-noise bands |
+| `{model}_residual_pacf.png` | PACF correlogram over the same lag range, computed at plot time |
+| `{model}_residuals_over_time.png` | Raw training residuals against the training dates |
+| `{model}_residual_qq.png` | Normal QQ plot of the training residuals |
+
+These plots honor `output.plot_dpi`, `output.plot_colors`, and
+`output.plot_font_sizes` from the config. `output.plot_figsize` applies to the
+counterfactual figure only; the diagnostic plots use fixed shapes suited to
+their content (wide correlograms, square QQ).
 
 ---
 

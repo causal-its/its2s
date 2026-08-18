@@ -2,12 +2,14 @@
 # Usage: from its2s.models.prophet_then_xgb import ProphetThenXGBModel
 # Dependencies: prophet, xgboost, numpy, pandas
 
+import copy
+
 import numpy as np
 import pandas as pd
 from prophet import Prophet
 from xgboost import XGBRegressor
 
-from .base import BaseModel, FitResult, PredictionResult
+from .base import BaseModel, FitResult, PredictionResult, report_auto_yearly_resolution
 from .utils import make_time_features as _make_time_features
 
 
@@ -36,9 +38,11 @@ class ProphetThenXGBModel(BaseModel):
         prophet_df.columns = ["ds", "y"]
         prophet_df["ds"] = pd.to_datetime(prophet_df["ds"])
 
+        yearly = p_params.get("yearly_seasonality", "auto")
+        report_auto_yearly_resolution(prophet_df, yearly)
         self._prophet = Prophet(
-            yearly_seasonality=p_params.get("yearly_seasonality", True),
-            weekly_seasonality=p_params.get("weekly_seasonality", True),
+            yearly_seasonality=yearly,
+            weekly_seasonality=p_params.get("weekly_seasonality", "auto"),
             daily_seasonality=p_params.get("daily_seasonality", False),
             changepoint_prior_scale=p_params.get("changepoint_prior_scale", 0.05),
         )
@@ -105,4 +109,4 @@ class ProphetThenXGBModel(BaseModel):
         )
 
     def clone_fresh(self):
-        return ProphetThenXGBModel(params=self.params.copy())
+        return ProphetThenXGBModel(params=copy.deepcopy(self.params))

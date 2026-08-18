@@ -89,21 +89,31 @@ confidence intervals.
 The package is tested and validated on daily data. It can be applied to other
 frequencies, but requires configuration adjustments:
 
-- **ARIMA seasonal period**: the default `m=7` assumes a daily series with a weekly
-  seasonal cycle. For weekly data, set `m=52`; for monthly data, set `m=12`. Override
-  via `config_overrides={"models": {"arima": {"m": 52}}}`.
+- **ARIMA seasonal period**: the default `m="auto"` derives the seasonal period from
+  the resolved series frequency (daily 7, weekly 52, monthly 12). When the frequency
+  is outside that mapping (e.g. quarterly) or the training window is shorter than
+  `2m`, it falls back to `m=1` (non-seasonal) with a visible warning. An explicit
+  integer (`config_overrides={"models": {"arima": {"m": 52}}}`) is always honored;
+  it warns, but still fits as asked, if the training window is shorter than `2m`.
+  Note the cost: on weekly data the resolved `m=52` can make the seasonal stepwise
+  search substantially slower than the non-seasonal fit.
 
 - **Series frequency**: resolved automatically from the date column and passed to any
-  model that needs it (currently NeuralProphet). There is no `freq` setting to
+  model that needs it (NeuralProphet's `freq`, ARIMA's `m`). There is no `freq` setting to
   declare. The resolver requires the series to be a complete, regularly spaced grid:
   gaps, duplicate dates, or irregular spacing raise an error naming the first
   offending timestamp. Note this also applies after `missing_data="drop"` removes
   rows -- a mid-series drop creates a gap; fill or aggregate to a regular grid
   instead.
 
-- **Block length**: the default MBB block length (`bootstrap.block_length=14`) was
-  derived for daily data. For other frequencies, this value may need to be adjusted
-  manually.
+- **Block length**: `bootstrap.block_length` is measured in observations (rows),
+  never calendar days: the default 14 -- derived for daily data -- spans two weeks
+  on a daily series but 14 weeks on a weekly one. For non-daily frequencies, this
+  value may need to be adjusted manually.
+
+- **NeuralProphet AR window**: `n_lags` likewise counts observations, not days:
+  the default 14 is a two-week autoregressive window on daily data but a 14-week
+  window on weekly data. Consider whether that window is what you mean.
 
 ---
 

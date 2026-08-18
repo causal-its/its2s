@@ -57,6 +57,22 @@ class TestSettings:
         assert default_config["data"]["target_col"] == "y"
         assert default_config["data"]["date_col"] == "ds"
 
+    def test_default_seasonality_flags_are_auto_strings(self, default_config):
+        """GH #60, D-057: the shipped defaults are the string "auto", not YAML bools."""
+        models = default_config["models"]
+        for section in (models["prophet_xgb"]["prophet"],
+                        models["prophet_then_xgb"]["prophet"],
+                        models["neuralprophet"]):
+            for key in ("weekly_seasonality", "yearly_seasonality"):
+                assert section[key] == "auto"
+                assert isinstance(section[key], str)
+
+    def test_default_arima_m_is_auto_string(self, default_config):
+        """GH #59, D-059: the shipped ARIMA m default is the string "auto"."""
+        m = default_config["models"]["arima"]["m"]
+        assert m == "auto"
+        assert isinstance(m, str)
+
     def test_config_override_shallow(self):
         from its2s.settings import load_config
         cfg = load_config(overrides={"bootstrap": {"n_sim": 50}})
@@ -236,7 +252,6 @@ class TestErrorMetrics:
         m = compute_metrics(a, a)
         assert m.rmse == pytest.approx(0.0, abs=1e-10)
         assert m.mae == pytest.approx(0.0, abs=1e-10)
-        assert m.r2 == pytest.approx(1.0, abs=1e-10)
 
     def test_rmse_known_value(self):
         from its2s.metrics.error_metrics import compute_metrics
@@ -261,14 +276,6 @@ class TestErrorMetrics:
         m = compute_metrics(a, p)
         assert m.mape == pytest.approx(expected_mape, rel=1e-6)
 
-    def test_smape_known_value(self):
-        from its2s.metrics.error_metrics import compute_metrics
-        a = np.array([100.0, 200.0])
-        p = np.array([110.0, 180.0])
-        expected = np.mean([20 / 210, 40 / 380]) * 100
-        m = compute_metrics(a, p)
-        assert m.smape == pytest.approx(expected, rel=1e-6)
-
     def test_mase_with_training_data(self):
         from its2s.metrics.error_metrics import compute_metrics
         training = np.array([10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0,
@@ -278,6 +285,11 @@ class TestErrorMetrics:
         m = compute_metrics(a, p, training_actual=training, seasonality=7)
         assert m.mase is not None
         assert isinstance(m.mase, float)
+        # The arithmetic series steps by 2, so the lag-7 naive error is a
+        # constant 14; model MAE is (1 + 2) / 2 = 1.5.
+        assert m.mase_denominator == pytest.approx(14.0, rel=1e-10)
+        assert m.mase == pytest.approx(1.5 / 14.0, rel=1e-10)
+        assert m.mase_m == 7
 
     def test_mase_none_without_training(self):
         from its2s.metrics.error_metrics import compute_metrics
@@ -285,33 +297,33 @@ class TestErrorMetrics:
         p = np.array([1.1, 2.1, 3.1])
         m = compute_metrics(a, p)
         assert m.mase is None
+        assert m.mase_m is None
+        assert m.mase_denominator is None
 
-    def test_r2_perfect(self):
+    def test_mase_requires_seasonality(self):
         from its2s.metrics.error_metrics import compute_metrics
-        a = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        m = compute_metrics(a, a)
-        assert m.r2 == pytest.approx(1.0, abs=1e-10)
+        a = np.array([1.0, 2.0])
+        p = np.array([1.1, 2.1])
+        training = np.arange(1.0, 30.0)
+        with pytest.raises(ValueError, match="seasonality"):
+            compute_metrics(a, p, training_actual=training)
 
-    def test_r2_constant_prediction(self):
-        from its2s.metrics.error_metrics import compute_metrics
-        a = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        p = np.full(5, 3.0)
-        m = compute_metrics(a, p)
-        assert m.r2 == pytest.approx(0.0, abs=1e-10)
-
-    def test_mape_with_zeros_in_actual(self):
+    def test_mape_with_zeros_goes_nan_with_warning(self):
         from its2s.metrics.error_metrics import compute_metrics
         a = np.array([0.0, 10.0, 20.0])
         p = np.array([5.0, 10.0, 25.0])
-        m = compute_metrics(a, p)
-        assert np.isfinite(m.mape)
+        with pytest.warns(UserWarning, match="1 of 3"):
+            m = compute_metrics(a, p)
+        assert np.isnan(m.mape)
 
-    def test_smape_all_zero(self):
+    def test_mape_no_warning_without_zeros(self):
         from its2s.metrics.error_metrics import compute_metrics
-        a = np.array([0.0, 0.0])
-        p = np.array([0.0, 0.0])
-        m = compute_metrics(a, p)
-        assert m.smape == pytest.approx(0.0, abs=1e-10)
+        a = np.array([1.0, 10.0, 20.0])
+        p = np.array([5.0, 10.0, 25.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            m = compute_metrics(a, p)
+        assert np.isfinite(m.mape)
 
     def test_metrics_result_dataclass(self):
         from its2s.metrics.error_metrics import compute_metrics, MetricsResult
@@ -319,8 +331,74 @@ class TestErrorMetrics:
         p = np.array([1.1, 2.1, 3.1])
         m = compute_metrics(a, p)
         assert isinstance(m, MetricsResult)
-        for attr in ("rmse", "mae", "mape", "smape", "r2"):
+        for attr in ("rmse", "mae", "mape", "mase", "mase_m",
+                     "mase_denominator"):
             assert hasattr(m, attr)
+        for gone in ("smape", "r2"):
+            assert not hasattr(m, gone)
+
+
+class TestResolveMetricsSeasonality:
+    """resolve_metrics_seasonality: the 'auto' path, the n_train >= 2m guard,
+    and the explicit-override contract (GH #62)."""
+
+    def _freq(self, alias):
+        from its2s.frequency import SeriesFrequency
+        return SeriesFrequency.from_alias(alias)
+
+    def test_auto_daily_resolves_7(self):
+        from its2s.metrics.error_metrics import resolve_metrics_seasonality
+        m = resolve_metrics_seasonality("auto", n_train=100,
+                                        series_freq=self._freq("D"))
+        assert m == 7
+
+    def test_auto_weekly_resolves_52(self):
+        from its2s.metrics.error_metrics import resolve_metrics_seasonality
+        m = resolve_metrics_seasonality("auto", n_train=300,
+                                        series_freq=self._freq("W-SUN"))
+        assert m == 52
+
+    def test_auto_monthly_resolves_12(self):
+        from its2s.metrics.error_metrics import resolve_metrics_seasonality
+        m = resolve_metrics_seasonality("auto", n_train=60,
+                                        series_freq=self._freq("MS"))
+        assert m == 12
+
+    def test_auto_short_series_falls_back_to_1_with_warning(self):
+        from its2s.metrics.error_metrics import resolve_metrics_seasonality
+        with pytest.warns(UserWarning, match="Falling back to m=1"):
+            m = resolve_metrics_seasonality("auto", n_train=80,
+                                            series_freq=self._freq("W-SUN"))
+        assert m == 1
+
+    def test_auto_unmapped_frequency_falls_back_to_1_with_warning(self):
+        from its2s.metrics.error_metrics import resolve_metrics_seasonality
+        with pytest.warns(UserWarning, match="no dominant seasonal period"):
+            m = resolve_metrics_seasonality("auto", n_train=100,
+                                            series_freq=self._freq("QS-JAN"))
+        assert m == 1
+
+    def test_explicit_integer_honored(self):
+        from its2s.metrics.error_metrics import resolve_metrics_seasonality
+        assert resolve_metrics_seasonality(365, n_train=800) == 365
+
+    def test_explicit_integer_failing_guard_raises(self):
+        from its2s.metrics.error_metrics import resolve_metrics_seasonality
+        with pytest.raises(ValueError, match="n_train >= 2\\*m"):
+            resolve_metrics_seasonality(52, n_train=80)
+
+    def test_explicit_integer_below_1_raises(self):
+        from its2s.metrics.error_metrics import resolve_metrics_seasonality
+        with pytest.raises(ValueError, match=">= 1"):
+            resolve_metrics_seasonality(0, n_train=100)
+
+    def test_dominant_cycle_mapping(self):
+        from its2s.frequency import dominant_seasonal_period
+        assert dominant_seasonal_period(self._freq("D")) == 7
+        assert dominant_seasonal_period(self._freq("W-SAT")) == 52
+        assert dominant_seasonal_period(self._freq("MS")) == 12
+        assert dominant_seasonal_period(self._freq("QS-JAN")) is None
+        assert dominant_seasonal_period(None) is None
 
 
 # ===================================================================
@@ -590,7 +668,11 @@ class TestExcess:
 # Residual Diagnostics
 # ===================================================================
 class TestDiagnostics:
-    """Unit tests for compute_diagnostics() and DiagnosticsResult."""
+    """Unit tests for compute_diagnostics() and DiagnosticsResult.
+
+    Lag semantics are frequency-conditional (GH #61, #35): the persisted ACF
+    vector is the descriptive record, key lags {1, m} carry the inferential
+    claims, and the Ljung-Box depth is min(2m, n // 5)."""
 
     def _make_fit_result(self, n=300, seed=42):
         """Minimal FitResult with synthetic residuals."""
@@ -600,16 +682,20 @@ class TestDiagnostics:
         residuals = rng.normal(0, 2.0, n)
         return FitResult(fitted_values=fitted, residuals=residuals)
 
+    def _freq(self, alias):
+        from its2s.frequency import SeriesFrequency
+        return SeriesFrequency.from_alias(alias)
+
     def test_returns_diagnostics_result(self):
         from its2s.diagnostics import compute_diagnostics, DiagnosticsResult
         fr = self._make_fit_result()
-        d = compute_diagnostics(fr, "test_model")
+        d = compute_diagnostics(fr, "test_model", self._freq("D"))
         assert isinstance(d, DiagnosticsResult)
 
     def test_residual_mean_and_std_are_finite(self):
         from its2s.diagnostics import compute_diagnostics
         fr = self._make_fit_result()
-        d = compute_diagnostics(fr, "test_model")
+        d = compute_diagnostics(fr, "test_model", self._freq("D"))
         assert np.isfinite(d.residual_mean)
         assert np.isfinite(d.residual_std)
         assert d.residual_std > 0
@@ -617,35 +703,99 @@ class TestDiagnostics:
     def test_residual_mean_near_zero_for_zero_mean_noise(self):
         from its2s.diagnostics import compute_diagnostics
         fr = self._make_fit_result(n=500, seed=7)
-        d = compute_diagnostics(fr, "test_model")
+        d = compute_diagnostics(fr, "test_model", self._freq("D"))
         assert abs(d.residual_mean) < 1.0
 
-    def test_acf_values_in_valid_range(self):
+    def test_acf_vector_covers_1_to_max_lag(self):
         from its2s.diagnostics import compute_diagnostics
         fr = self._make_fit_result(n=200, seed=1)
-        d = compute_diagnostics(fr, "test_model")
-        for acf_val in (d.acf_lag1, d.acf_lag7, d.acf_lag14):
-            if np.isfinite(acf_val):
-                assert -1.0 <= acf_val <= 1.0
+        d = compute_diagnostics(fr, "test_model", self._freq("D"))
+        # max_lag = min(200 // 2, 200 - 30) = 100
+        assert d.params["max_lag"] == 100
+        assert sorted(d.acf.keys()) == list(range(1, 101))
+        for lag, val in d.acf.items():
+            assert -1.0 <= val <= 1.0
 
-    def test_ljung_box_pvalue_in_range(self):
+    def test_acf_matches_manual_computation(self):
+        # The persisted vector must reproduce the exact estimator the old
+        # acf_lag1/7/14 fields used (daily differential gate: same values,
+        # new field names).
+        from its2s.diagnostics import compute_diagnostics
+        fr = self._make_fit_result(n=200, seed=1)
+        d = compute_diagnostics(fr, "test_model", self._freq("D"))
+        x = fr.residuals
+        xm = x - np.mean(x)
+        c0 = np.dot(xm, xm) / len(x)
+        for lag in (1, 7, 14):
+            expected = float(np.dot(xm[lag:], xm[:-lag]) / len(x) / c0)
+            assert d.acf[lag] == expected
+
+    def test_key_lags_daily(self):
         from its2s.diagnostics import compute_diagnostics
         fr = self._make_fit_result(n=200, seed=2)
-        d = compute_diagnostics(fr, "test_model")
+        d = compute_diagnostics(fr, "test_model", self._freq("D"))
+        assert d.key_lags == [1, 7]
+        assert d.params["m"] == 7
+        assert d.params["freq_alias"] == "D"
+
+    def test_key_lags_weekly(self):
+        from its2s.diagnostics import compute_diagnostics
+        fr = self._make_fit_result(n=300, seed=3)
+        d = compute_diagnostics(fr, "test_model", self._freq("W-SUN"))
+        assert d.key_lags == [1, 52]
+        assert np.isfinite(d.acf[52])
+
+    def test_key_lag_beyond_max_lag_is_nan_with_warning(self):
+        from its2s.diagnostics import compute_diagnostics
+        fr = self._make_fit_result(n=60, seed=4)
+        # max_lag = min(30, 30) = 30 < 52: the annual lag cannot be estimated
+        with pytest.warns(UserWarning, match="key lag 52"):
+            d = compute_diagnostics(fr, "test_model", self._freq("W-SUN"))
+        assert 52 in d.key_lags
+        assert np.isnan(d.acf[52])
+        assert any("key lag 52" in note for note in d.params["notes"])
+
+    def test_ljung_box_depth_daily(self):
+        from its2s.diagnostics import compute_diagnostics
+        fr = self._make_fit_result(n=200, seed=5)
+        d = compute_diagnostics(fr, "test_model", self._freq("D"))
+        # depth = min(2 * 7, 200 // 5) = 14
+        assert d.ljung_box_lags == 14
         if np.isfinite(d.ljung_box_pvalue):
             assert 0.0 <= d.ljung_box_pvalue <= 1.0
+
+    def test_ljung_box_cap_binding_below_m_is_annotated(self):
+        from its2s.diagnostics import compute_diagnostics
+        fr = self._make_fit_result(n=150, seed=6)
+        # weekly: depth = min(104, 150 // 5) = 30 < m = 52
+        d = compute_diagnostics(fr, "test_model", self._freq("W-SUN"))
+        assert d.ljung_box_lags == 30
+        assert any("outside the pooled window" in note
+                   for note in d.params["notes"])
+
+    def test_unmapped_frequency_falls_back_loudly(self):
+        from its2s.diagnostics import compute_diagnostics
+        fr = self._make_fit_result(n=200, seed=8)
+        with pytest.warns(UserWarning, match="No dominant seasonal period"):
+            d = compute_diagnostics(fr, "test_model", self._freq("QS-JAN"))
+        assert d.key_lags == [1]
+        assert d.params["m"] is None
+        # non-seasonal prescription: min(10, 200 // 5) = 10
+        assert d.ljung_box_lags == 10
 
     def test_shapiro_none_for_large_n(self):
         from its2s.diagnostics import compute_diagnostics
         fr = self._make_fit_result(n=6000, seed=3)
-        d = compute_diagnostics(fr, "test_model", max_shapiro_n=5000)
+        d = compute_diagnostics(fr, "test_model", self._freq("D"),
+                                max_shapiro_n=5000)
         assert d.shapiro_pvalue is None
         assert d.shapiro_stat is None
 
     def test_shapiro_computed_for_small_n(self):
         from its2s.diagnostics import compute_diagnostics
         fr = self._make_fit_result(n=100, seed=4)
-        d = compute_diagnostics(fr, "test_model", max_shapiro_n=5000)
+        d = compute_diagnostics(fr, "test_model", self._freq("D"),
+                                max_shapiro_n=5000)
         assert d.shapiro_pvalue is not None
         assert isinstance(d.shapiro_pvalue, float)
         assert 0.0 <= d.shapiro_pvalue <= 1.0
@@ -657,23 +807,29 @@ class TestDiagnostics:
         residuals = rng.normal(0, 1.0, 100)
         residuals[[0, 5, 10]] = np.nan
         fr = FitResult(fitted_values=np.ones(100), residuals=residuals)
-        d = compute_diagnostics(fr, "np_model")
+        d = compute_diagnostics(fr, "np_model", self._freq("D"))
         assert np.isfinite(d.residual_mean)
         assert np.isfinite(d.residual_std)
+        # NaNs are dropped before anything else: n reflects the clean count
+        assert d.params["n"] == 97
 
     def test_model_name_stored_in_metadata(self):
         from its2s.diagnostics import compute_diagnostics
         fr = self._make_fit_result(n=100, seed=6)
-        d = compute_diagnostics(fr, "my_model")
+        d = compute_diagnostics(fr, "my_model", self._freq("D"))
         assert d.model_metadata.get("model_name") == "my_model"
 
-    def test_acf_lag14_nan_for_short_residuals(self):
+    def test_short_series_key_lags_nan_with_warnings(self):
         from its2s.diagnostics import compute_diagnostics
         from its2s.models.base import FitResult
         residuals = np.random.default_rng(7).normal(0, 1, 10)
         fr = FitResult(fitted_values=np.ones(10), residuals=residuals)
-        d = compute_diagnostics(fr, "short_model")
-        assert np.isnan(d.acf_lag14)
+        # n = 10: max_lag = 0, so even lag 1 cannot be estimated
+        with pytest.warns(UserWarning, match="key lag"):
+            d = compute_diagnostics(fr, "short_model", self._freq("D"))
+        assert d.params["max_lag"] == 0
+        assert np.isnan(d.acf[1])
+        assert np.isnan(d.acf[7])
 
 
 # ===================================================================
@@ -692,7 +848,8 @@ class TestOutputs:
             fitted_values=np.ones(30),
             residuals=np.zeros(30),
         )
-        mr = MetricsResult(rmse=1.0, mae=0.8, mape=5.0, smape=4.5, mase=0.9, r2=0.95)
+        mr = MetricsResult(rmse=1.0, mae=0.8, mape=5.0, mase=0.9, mase_m=7,
+                           mase_denominator=1.1)
         er = ExcessResult(
             obs_excess=pd.DataFrame({
                 "date": pd.date_range("2021-01-31", periods=10),
@@ -821,6 +978,294 @@ class TestOutputs:
         assert path.exists()
         loaded = pd.read_csv(path)
         assert len(loaded) == 2
+
+    def _make_fit_and_diag(self, n=200, alias="D", seed=1):
+        """(FitResult, DiagnosticsResult) from synthetic residuals."""
+        from its2s.diagnostics import compute_diagnostics
+        from its2s.frequency import SeriesFrequency
+        from its2s.models.base import FitResult
+        rng = np.random.default_rng(seed)
+        fr = FitResult(fitted_values=np.ones(n),
+                       residuals=rng.normal(0, 2.0, n))
+        diag = compute_diagnostics(fr, "test_model",
+                                   SeriesFrequency.from_alias(alias))
+        return fr, diag
+
+    def _make_diagnostics(self, n=200, alias="D", seed=1):
+        """DiagnosticsResult from synthetic residuals, for writer tests."""
+        return self._make_fit_and_diag(n=n, alias=alias, seed=seed)[1]
+
+    def test_save_diagnostics_table_columns_and_context(self, tmp_path):
+        from its2s.outputs.tables import save_diagnostics_table
+        diag = self._make_diagnostics(n=200, alias="D")
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        assert list(loaded.columns) == [
+            "model_name", "section", "statistic", "lag", "lag_units",
+            "value", "status", "note", "freq_alias", "m", "n",
+        ]
+        assert (loaded["model_name"] == "test_model").all()
+        assert (loaded["freq_alias"] == "D").all()
+        assert (loaded["m"] == 7).all()
+        assert (loaded["n"] == 200).all()
+        acf_rows = loaded[loaded["section"] == "acf"]
+        assert len(acf_rows) == diag.params["max_lag"]
+        assert (acf_rows["lag_units"] == "observations").all()
+
+    def test_save_diagnostics_table_roundtrip_acf_values(self, tmp_path):
+        from its2s.outputs.tables import save_diagnostics_table
+        diag = self._make_diagnostics(n=200, alias="D")
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        acf_rows = loaded[loaded["section"] == "acf"].set_index("lag")
+        assert (acf_rows["status"] == "ok").all()
+        for lag, val in diag.acf.items():
+            assert acf_rows.loc[lag, "value"] == pytest.approx(val)
+
+    def test_save_diagnostics_table_shapiro_not_computed(self, tmp_path):
+        from its2s.outputs.tables import save_diagnostics_table
+        diag = self._make_diagnostics(n=6000, alias="D")
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        sh = loaded[loaded["section"] == "shapiro"]
+        assert len(sh) == 2
+        assert (sh["status"] == "not_computed").all()
+        assert sh["value"].isna().all()
+        assert (sh["note"] == "n outside 3..5000").all()
+
+    def test_save_diagnostics_table_ljungbox_short_n(self, tmp_path):
+        from its2s.outputs.tables import save_diagnostics_table
+        # n = 12: Ljung-Box is skipped (n <= 15) and even lag 1 exceeds
+        # max_lag = 0, so the key-lag warning fires during computation.
+        with pytest.warns(UserWarning, match="key lag"):
+            diag = self._make_diagnostics(n=12, alias="D")
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        lb = loaded[loaded["section"] == "ljung_box"]
+        assert len(lb) == 3
+        assert (lb["status"] == "not_computed").all()
+        assert lb["value"].isna().all()
+        assert lb["note"].str.contains("n <= 15").all()
+
+    def test_save_diagnostics_table_key_lag_unreachable(self, tmp_path):
+        from its2s.outputs.tables import save_diagnostics_table
+        # weekly n = 60: max_lag = 30 < 52, the annual key lag is present
+        # in the file but marked not_computed with the reason
+        with pytest.warns(UserWarning, match="key lag 52"):
+            diag = self._make_diagnostics(n=60, alias="W-SUN")
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        row52 = loaded[(loaded["section"] == "acf") & (loaded["lag"] == 52)]
+        assert len(row52) == 1
+        assert row52["status"].iloc[0] == "not_computed"
+        assert "max_lag=30" in row52["note"].iloc[0]
+        row1 = loaded[(loaded["section"] == "acf") & (loaded["lag"] == 1)]
+        assert row1["status"].iloc[0] == "ok"
+
+    def test_save_diagnostics_table_unmapped_freq(self, tmp_path):
+        from its2s.outputs.tables import save_diagnostics_table
+        with pytest.warns(UserWarning, match="No dominant seasonal period"):
+            diag = self._make_diagnostics(n=200, alias="QS-JAN")
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        assert loaded["m"].isna().all()
+        assert (loaded["freq_alias"] == "QS-JAN").all()
+        acf_rows = loaded[loaded["section"] == "acf"]
+        assert (acf_rows["lag_units"] == "observations").all()
+        assert (acf_rows["status"] == "ok").all()
+
+    def test_weekly_diagnostics_csv_surfaces_annual_lag(self, tmp_path):
+        # Acceptance for GH #64/#65: on a weekly series with annual
+        # residual structure, the persisted CSV carries the lag-52 value
+        # that the pre-#64 outputs (scalars at daily-shaped lags) hid.
+        from its2s.diagnostics import compute_diagnostics
+        from its2s.frequency import SeriesFrequency
+        from its2s.models.base import FitResult
+        from its2s.outputs.tables import save_diagnostics_table
+        rng = np.random.default_rng(11)
+        n = 260
+        t = np.arange(n, dtype=float)
+        residuals = 5.0 * np.sin(2 * np.pi * t / 52) + rng.normal(0, 1.0, n)
+        fr = FitResult(fitted_values=np.ones(n), residuals=residuals)
+        diag = compute_diagnostics(fr, "test_model",
+                                   SeriesFrequency.from_alias("W-SUN"))
+        path = tmp_path / "diag.csv"
+        save_diagnostics_table(diag, path)
+        loaded = pd.read_csv(path)
+        row52 = loaded[(loaded["section"] == "acf") & (loaded["lag"] == 52)]
+        assert len(row52) == 1
+        assert row52["status"].iloc[0] == "ok"
+        assert abs(row52["value"].iloc[0]) > 0.4
+        assert row52["lag_units"].iloc[0] == "observations"
+        assert row52["m"].iloc[0] == 52
+
+    def test_plot_residual_acf_saves(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_acf
+        _, diag = self._make_fit_and_diag(n=200, alias="D")
+        path = tmp_path / "acf.png"
+        plot_residual_acf(diag, save_path=path)
+        assert path.exists()
+        assert path.stat().st_size > 0
+
+    def test_plot_residual_acf_renders_persisted_vector(self, tmp_path):
+        # The correlogram must draw DiagnosticsResult.acf as persisted,
+        # never recompute (the docs/diagnostics.md three-layer contract):
+        # a tampered value must appear in the figure verbatim.
+        from its2s.outputs.diagnostic_plots import plot_residual_acf
+        import matplotlib.pyplot as plt
+        _, diag = self._make_fit_and_diag(n=200, alias="D")
+        diag.acf[5] = 0.9
+        fig = plot_residual_acf(diag, save_path=None)
+        ax = fig.axes[0]
+        heights = {}
+        for coll in ax.collections:
+            for seg in coll.get_segments():
+                (x0, _y0), (_x1, y1) = seg
+                heights[round(x0)] = y1
+        assert heights[5] == pytest.approx(0.9)
+        plt.close(fig)
+
+    def test_plot_residual_acf_annotates_unreachable_m(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_acf
+        import matplotlib.pyplot as plt
+        with pytest.warns(UserWarning, match="key lag 52"):
+            _, diag = self._make_fit_and_diag(n=60, alias="W-SUN")
+        fig = plot_residual_acf(diag, save_path=None)
+        texts = " ".join(t.get_text() for t in fig.axes[0].texts)
+        assert "m=52" in texts
+        assert "unavailable" in texts
+        plt.close(fig)
+
+    def test_plot_residual_acf_short_series_placeholder(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_acf
+        with pytest.warns(UserWarning, match="key lag"):
+            _, diag = self._make_fit_and_diag(n=12, alias="D")
+        path = tmp_path / "acf_short.png"
+        with pytest.warns(UserWarning, match="too short"):
+            plot_residual_acf(diag, save_path=path)
+        assert path.exists()
+
+    def test_plot_residual_pacf_saves(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_pacf
+        fr, diag = self._make_fit_and_diag(n=200, alias="D")
+        path = tmp_path / "pacf.png"
+        plot_residual_pacf(diag, fr, save_path=path)
+        assert path.exists()
+        assert path.stat().st_size > 0
+
+    def test_plot_residual_pacf_lag_cap(self, tmp_path):
+        # n = 64: max_lag = min(32, 34) = 32 but statsmodels requires
+        # nlags < n // 2; the cap must prevent the ValueError
+        from its2s.outputs.diagnostic_plots import plot_residual_pacf
+        fr, diag = self._make_fit_and_diag(n=64, alias="D")
+        path = tmp_path / "pacf_cap.png"
+        plot_residual_pacf(diag, fr, save_path=path)
+        assert path.exists()
+
+    def test_plot_residuals_over_time_saves(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residuals_over_time
+        from its2s.data_prep import prepare_splits
+        from its2s.models.base import FitResult
+        df, intv, _ = make_short_series(n_pre=180, n_post=30)
+        splits = prepare_splits(df, intv, split_method="days",
+                                test_days=30, holdout_days=30)
+        n_train = len(splits.train_df)
+        rng = np.random.default_rng(2)
+        fr = FitResult(fitted_values=np.ones(n_train),
+                       residuals=rng.normal(0, 1.0, n_train))
+        path = tmp_path / "rot.png"
+        plot_residuals_over_time(fr, splits, save_path=path)
+        assert path.exists()
+
+    def test_plot_residuals_over_time_leading_nans(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residuals_over_time
+        from its2s.data_prep import prepare_splits
+        from its2s.models.base import FitResult
+        df, intv, _ = make_short_series(n_pre=180, n_post=30)
+        splits = prepare_splits(df, intv, split_method="days",
+                                test_days=30, holdout_days=30)
+        n_train = len(splits.train_df)
+        residuals = np.random.default_rng(3).normal(0, 1.0, n_train)
+        residuals[:5] = np.nan
+        fr = FitResult(fitted_values=np.ones(n_train), residuals=residuals)
+        path = tmp_path / "rot_nan.png"
+        plot_residuals_over_time(fr, splits, save_path=path)
+        assert path.exists()
+
+    def test_plot_residuals_over_time_length_mismatch_warns(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residuals_over_time
+        from its2s.data_prep import prepare_splits
+        from its2s.models.base import FitResult
+        df, intv, _ = make_short_series(n_pre=180, n_post=30)
+        splits = prepare_splits(df, intv, split_method="days",
+                                test_days=30, holdout_days=30)
+        fr = FitResult(fitted_values=np.ones(10),
+                       residuals=np.zeros(10))
+        path = tmp_path / "rot_mismatch.png"
+        with pytest.warns(UserWarning, match="does not match"):
+            plot_residuals_over_time(fr, splits, save_path=path)
+        assert path.exists()
+
+    def test_plot_residual_qq_saves(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_qq
+        fr, _ = self._make_fit_and_diag(n=200, alias="D")
+        path = tmp_path / "qq.png"
+        plot_residual_qq(fr, save_path=path)
+        assert path.exists()
+        assert path.stat().st_size > 0
+
+    def test_plot_residual_diagnostics_writes_four_files(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_diagnostics
+        from its2s.data_prep import prepare_splits
+        from its2s.diagnostics import compute_diagnostics
+        from its2s.frequency import SeriesFrequency
+        from its2s.models.base import FitResult
+        df, intv, _ = make_short_series(n_pre=180, n_post=30)
+        splits = prepare_splits(df, intv, split_method="days",
+                                test_days=30, holdout_days=30)
+        n_train = len(splits.train_df)
+        rng = np.random.default_rng(4)
+        fr = FitResult(fitted_values=np.ones(n_train),
+                       residuals=rng.normal(0, 1.0, n_train))
+        diag = compute_diagnostics(fr, "test_model",
+                                   SeriesFrequency.from_alias("D"))
+        paths = plot_residual_diagnostics(diag, fr, splits, tmp_path,
+                                          "test_model")
+        assert len(paths) == 4
+        expected = [
+            "test_model_residual_acf.png",
+            "test_model_residual_pacf.png",
+            "test_model_residuals_over_time.png",
+            "test_model_residual_qq.png",
+        ]
+        for name in expected:
+            assert (tmp_path / name).exists()
+
+    def test_plot_residual_diagnostics_unmapped_freq_ok(self, tmp_path):
+        from its2s.outputs.diagnostic_plots import plot_residual_diagnostics
+        from its2s.data_prep import prepare_splits
+        from its2s.diagnostics import compute_diagnostics
+        from its2s.frequency import SeriesFrequency
+        from its2s.models.base import FitResult
+        df, intv, _ = make_short_series(n_pre=180, n_post=30)
+        splits = prepare_splits(df, intv, split_method="days",
+                                test_days=30, holdout_days=30)
+        n_train = len(splits.train_df)
+        rng = np.random.default_rng(5)
+        fr = FitResult(fitted_values=np.ones(n_train),
+                       residuals=rng.normal(0, 1.0, n_train))
+        with pytest.warns(UserWarning, match="No dominant seasonal period"):
+            diag = compute_diagnostics(fr, "test_model",
+                                       SeriesFrequency.from_alias("QS-JAN"))
+        paths = plot_residual_diagnostics(diag, fr, splits, tmp_path,
+                                          "test_model")
+        assert all(p.exists() for p in paths)
 
     def test_pipeline_result_summary_is_string(self):
         pr, _, _ = self._make_minimal_pipeline_result()
@@ -1290,7 +1735,7 @@ class TestCompare:
         comparison_df, _ = _run_quiet(compare_models, df, intv,
                                        model_names=["arima"],
                                        config_overrides=self._COMPARE_CFG, seed=42)
-        for col in ("test_rmse", "test_mae", "test_r2"):
+        for col in ("test_rmse", "test_mae", "test_mase"):
             assert col in comparison_df.columns
 
 

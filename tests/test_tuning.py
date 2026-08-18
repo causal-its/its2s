@@ -446,7 +446,7 @@ class TestTuneModelCvEndDate:
                     config_overrides=None, **cv_kwargs):
             calls.append({"config_overrides": config_overrides, **cv_kwargs})
             return CVResult(model_name=model_name, folds=[], mean_rmse=1.0,
-                            mean_mae=1.0, mean_mape=1.0, mean_r2=0.0,
+                            mean_mae=1.0, mean_mape=1.0,
                             std_rmse=0.0, std_mae=0.0)
 
         monkeypatch.setattr("its2s.tuning.time_series_cv", fake_cv)

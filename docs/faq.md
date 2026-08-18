@@ -73,9 +73,10 @@ Two checks in order of importance:
    The observed and expected lines should track closely before the event. Divergence
    before the event means the model did not capture the baseline trend.
 
-2. **Numeric**: check `{model}_metrics.csv`. A low test R² (e.g., below 0.5) or a test
-   RMSE that is large relative to the outcome's range signals poor generalization. The
-   test window performance — not training performance — is the relevant signal.
+2. **Numeric**: check `{model}_metrics.csv`. A test MASE near or above 1 (no better
+   than carrying forward the last seasonal cycle) or a test RMSE that is large
+   relative to the outcome's range signals poor generalization. The test window
+   performance — not training performance — is the relevant signal.
 
 If either check fails, try a different model via `compare_models()` or add covariates
 that help explain the baseline trend.
@@ -85,8 +86,9 @@ that help explain the baseline trend.
 **What block length should I use for the Moving Block Bootstrap?**
 
 The default `block_length=14` is appropriate for daily data with moderate
-autocorrelation (approximately two weeks of temporal dependence). It is not
-automatically adapted to other data configurations.
+autocorrelation (approximately two weeks of temporal dependence). Block length is
+measured in observations, never calendar days -- 14 means 14 weeks on a weekly
+series -- and it is not automatically adapted to other data configurations.
 
 For non-daily data or series with substantially different autocorrelation structure,
 the default may produce CI coverage that is too narrow or too wide. Adjust via
@@ -112,16 +114,24 @@ be handled before running.
 
 **Can I use this package on weekly or monthly data?**
 
-Yes, but configuration adjustments are required:
+Yes. Frequency-dependent defaults resolve automatically, with two caveats:
 
-- Set `m` for ARIMA: `config_overrides={"models": {"arima": {"m": 52}}}` for weekly,
-  `{"m": 12}` for monthly.
+- ARIMA's seasonal period `m` defaults to `"auto"` and resolves from the series
+  frequency (daily 7, weekly 52, monthly 12). An explicit override
+  (`config_overrides={"models": {"arima": {"m": 52}}}`) is needed only for
+  frequencies outside that mapping (e.g. quarterly), where auto falls back to
+  `m=1` with a warning. Be aware of the runtime cost: on weekly data the resolved
+  `m=52` seasonal search can be substantially slower; set an explicit smaller `m` or
+  `seasonal: false` to trade seasonality for speed.
 - Series frequency itself is resolved automatically from the date column; the series
   must be a complete, regularly spaced grid (no gaps or duplicate dates), or the
   pipeline raises an error naming the first offending timestamp.
 - Consider adjusting `block_length` for the MBB (default 14 is calibrated for daily
   data; block length is measured in observations, so 14 means 14 weeks on a weekly
   series).
+- NeuralProphet's `n_lags` is likewise an observation count, not days: the default
+  14 is a 14-week autoregressive window on a weekly series. Consider whether that
+  window is what you mean.
 
 ---
 
@@ -218,3 +228,32 @@ config_overrides = {
 
 Inside `tune_model`, the search space also accepts double-underscore flattened keys
 for nested model parameters (e.g., `"xgb__max_depth"` for XGBoost's `max_depth`).
+
+**Why did my yearly seasonality disappear (or appear) when I changed the date range?**
+
+The Prophet-backed models ship `yearly_seasonality: auto`, and both Prophet and
+NeuralProphet resolve `auto` with the same rule: the yearly component is enabled only
+when the training history spans at least 730 days (two annual cycles). This is a hard
+boundary, not a gradual taper. A training window spanning 729 days gets no yearly
+component; one spanning 730 days gets a full one, at Fourier order 10.
+
+That matters most for a common setup: roughly two years of daily pre-period data. If
+your series has genuine annual structure and the component is disabled, the seasonal
+signal does not disappear -- it loads onto the trend instead, and the counterfactual
+forecast extrapolates that contaminated trend. The estimated effect absorbs the
+season, biased in whichever direction the season was moving at the intervention.
+
+its2s therefore reports the resolution in BOTH directions, as a `UserWarning` naming
+the observed span, the rule, and the override, so you can always see which side of
+the boundary your series landed on. Override the rule explicitly when you know your
+series better than the day count does:
+
+```python
+config_overrides = {
+    "models": {"prophet_xgb": {"prophet": {"yearly_seasonality": True}}},
+}
+```
+
+An explicit `True` or `False` is honored silently -- the report is only for `auto`.
+Setting it explicitly is the right move whenever your training window sits near 730
+days, in either direction.

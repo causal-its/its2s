@@ -37,8 +37,8 @@ periods:
 models:
   prophet_xgb:
     prophet:
-      yearly_seasonality: true
-      weekly_seasonality: true
+      yearly_seasonality: auto  # resolved by the 730-day rule; the resolution is reported in BOTH directions; GH #60, D-057, D-080
+      weekly_seasonality: auto  # Prophet's spacing rule: off when observations are >= 7 days apart; GH #60
       daily_seasonality: false
       changepoint_prior_scale: 0.05
     xgb:
@@ -52,8 +52,8 @@ models:
 
   prophet_then_xgb:
     prophet:
-      yearly_seasonality: true
-      weekly_seasonality: true
+      yearly_seasonality: auto  # resolved by the 730-day rule; the resolution is reported in BOTH directions; GH #60, D-057, D-080
+      weekly_seasonality: auto  # Prophet's spacing rule: off when observations are >= 7 days apart; GH #60
       daily_seasonality: false
       changepoint_prior_scale: 0.05
     xgb:
@@ -66,9 +66,9 @@ models:
       gamma: 1.0
 
   neuralprophet:
-    n_lags: 14
-    yearly_seasonality: true
-    weekly_seasonality: true
+    n_lags: 14  # AR window in OBSERVATIONS, not days: two weeks on daily data, 14 weeks on weekly; GH #59
+    yearly_seasonality: auto  # resolved by the 730-day rule; the resolution is reported in BOTH directions; GH #60, D-057, D-080
+    weekly_seasonality: auto  # same rule as Prophet's, verified in neuralprophet 0.8.0; GH #60
     learning_rate: 0.01
     epochs: 100
     batch_size: 64
@@ -78,20 +78,35 @@ models:
     max_d: 2
     max_q: 5
     seasonal: true
-    m: 7
+    # Seasonal period for auto_arima. "auto" derives the dominant cycle from
+    # the resolved series frequency (daily 7, weekly 52, monthly 12) and falls
+    # back LOUDLY to m=1 (non-seasonal) when the frequency is unmapped or
+    # n_train < 2m. An integer is honored exactly, never substituted: it
+    # warns (but fits as asked) when n_train < 2m. Note the runtime cost:
+    # weekly data resolves m=52 and the seasonal stepwise search can be slow.
+    # GH #59, D-055 pattern.
+    m: auto
     stepwise: true
     suppress_warnings: true
 
 bootstrap:
   method: "mbb"
   n_sim: 1000
+  # Block length in OBSERVATIONS, not days: 14 = two weeks on daily data but
+  # 14 weeks on a weekly series. Calibrated on daily data; adjust for other
+  # frequencies (a data-driven selector is parked, not a launch item). GH #59
   block_length: 14
   ci_method: "quantile"
   ci_level: 0.95
   n_jobs: 1
 
 metrics:
-  seasonality: 7
+  # MASE benchmark period m. "auto" derives the dominant seasonal cycle from
+  # the resolved series frequency (daily 7, weekly 52, monthly 12). An integer
+  # names the benchmark explicitly (e.g. 365 for annual-on-daily) and is
+  # honored or fails hard: the guard n_train >= 2m falls back to m=1 with a
+  # warning on "auto", but never silently substitutes an explicit choice.
+  seasonality: auto
 
 output:
   format: "csv"

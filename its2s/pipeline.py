@@ -15,11 +15,17 @@ from .settings import get_model_config, load_config
 from .data_prep import prepare_splits, resolve_split_config
 from .frequency import resolve_frequency
 from .validation import validate_inputs
-from .metrics.error_metrics import compute_metrics, MetricsResult
+from .metrics.error_metrics import (
+    compute_metrics, MetricsResult, resolve_metrics_seasonality,
+)
 from .metrics.excess import (ExcessResult, calc_ate_summary, calculate_excess,
                              validate_excess_periods)
+from .outputs.diagnostic_plots import plot_residual_diagnostics
 from .outputs.plots import plot_counterfactual
-from .outputs.tables import save_ate_summary, save_excess_table, save_metrics_table
+from .outputs.tables import (
+    save_ate_summary, save_diagnostics_table, save_excess_table,
+    save_metrics_table,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +100,9 @@ class PipelineResult:
         dates, actual, predicted, conf_lo, conf_hi, pred_matrix, and
         n_successful.
     metrics_train : MetricsResult
-        RMSE, MAE, MAPE, and R2 computed on the training period.
+        RMSE, MAE, MAPE, and MASE computed on the training period.
     metrics_test : MetricsResult
-        RMSE, MAE, MAPE, and R2 computed on the test period.
+        RMSE, MAE, MAPE, and MASE computed on the test period.
     excess_table : ExcessResult
         Per-observation excess estimates with CIs for the holdout period.
         Pass to calc_ate_summary() to get total and per-observation ATE
@@ -104,8 +110,9 @@ class PipelineResult:
     config : dict
         Full resolved config dict used for this run.
     diagnostics : DiagnosticsResult or None
-        Residual diagnostics (Ljung-Box, Shapiro-Wilk, ACF lags). None if
-        diagnostics could not be computed.
+        Residual diagnostics (Ljung-Box, Shapiro-Wilk, the persisted ACF
+        vector with key lags {1, m}). None if diagnostics could not be
+        computed.
     series_frequency : SeriesFrequency or None
         Frequency resolved from the data (its2s.frequency), the single
         source for all window-unit interpretation.
@@ -131,11 +138,15 @@ class PipelineResult:
         lines.append("Train metrics:")
         mt = self.metrics_train
         lines.append(f"  RMSE={mt.rmse:.4f}  MAE={mt.mae:.4f}  "
-                      f"MAPE={mt.mape:.2f}%  R2={mt.r2:.4f}")
+                      f"MAPE={mt.mape:.2f}%")
         lines.append("Test metrics:")
         mt = self.metrics_test
+        mase_str = ""
+        if mt.mase is not None:
+            mase_str = (f"  MASE={mt.mase:.4f} "
+                        f"(m={mt.mase_m}, naive MAE={mt.mase_denominator:.4f})")
         lines.append(f"  RMSE={mt.rmse:.4f}  MAE={mt.mae:.4f}  "
-                      f"MAPE={mt.mape:.2f}%  R2={mt.r2:.4f}")
+                      f"MAPE={mt.mape:.2f}%{mase_str}")
         if not self.excess_table.obs_excess.empty:
             ate = calc_ate_summary(self.excess_table)
             total = ate[ate["metric"] == "Total ATE"].iloc[0]
@@ -152,11 +163,13 @@ class PipelineResult:
             lines.append("Residual diagnostics:")
             lines.append(f"  Mean={d.residual_mean:.4f}  "
                           f"Std={d.residual_std:.4f}")
-            lines.append(f"  ACF(1)={d.acf_lag1:.3f}  "
-                          f"ACF(7)={d.acf_lag7:.3f}  "
-                          f"ACF(14)={d.acf_lag14:.3f}")
+            key_str = "  ".join(f"ACF({lag})={d.acf[lag]:.3f}"
+                                for lag in d.key_lags)
+            lines.append(f"  {key_str}  (m={d.params.get('m')}, "
+                          f"freq={d.params.get('freq_alias')})")
             if not pd.isna(d.ljung_box_pvalue):
-                lines.append(f"  Ljung-Box(10) p={d.ljung_box_pvalue:.4f}")
+                lines.append(f"  Ljung-Box({d.ljung_box_lags}) "
+                              f"p={d.ljung_box_pvalue:.4f}")
             if d.shapiro_pvalue is not None:
                 lines.append(f"  Shapiro-Wilk p={d.shapiro_pvalue:.4f}")
         return "\n".join(lines)
@@ -295,6 +308,16 @@ def run_single_its(
         **split_kwargs,
     )
 
+    # 2b. Resolve the MASE benchmark period m once from config ('auto'
+    # derives it from the series frequency) with the n_train >= 2m guard
+    # (GH #62). Resolved before fitting so an explicit period that fails the
+    # guard errors out before any expensive work.
+    metrics_m = resolve_metrics_seasonality(
+        config["metrics"]["seasonality"],
+        n_train=len(splits.train_df),
+        series_freq=series_freq,
+    )
+
     # 3. Instantiate model
     model_params = get_model_config(config, model_name)
     if model_name == "neuralprophet":
@@ -329,8 +352,9 @@ def run_single_its(
         date_col=date_col, covariate_cols=covariate_cols or None,
     )
 
-    # 4b. Compute residual diagnostics
-    diag = compute_diagnostics(fit_result, model_name)
+    # 4b. Compute residual diagnostics (lag semantics follow the resolved
+    # frequency, GH #61/#35)
+    diag = compute_diagnostics(fit_result, model_name, series_freq)
 
     # 5. Bootstrap CIs
     boot_config = config["bootstrap"]
@@ -349,7 +373,7 @@ def run_single_its(
         covariate_cols=covariate_cols or None, seed=seed,
     )
 
-    # 6. Compute metrics
+    # 6. Compute metrics (m resolved at step 2b)
     train_pred = model.predict(
         splits.train_df, target_col=target_col,
         date_col=date_col, covariate_cols=covariate_cols or None,
@@ -357,7 +381,7 @@ def run_single_its(
     metrics_train = compute_metrics(
         splits.train_df[target_col].values,
         train_pred.predicted,
-        seasonality=config["metrics"]["seasonality"],
+        seasonality=metrics_m,
     )
 
     # Test metrics from bootstrap point predictions
@@ -367,7 +391,7 @@ def run_single_its(
             bootstrap_result.actual[test_mask],
             bootstrap_result.predicted[test_mask],
             training_actual=splits.train_df[target_col].values,
-            seasonality=config["metrics"]["seasonality"],
+            seasonality=metrics_m,
         )
     else:
         metrics_test = metrics_train
@@ -407,6 +431,9 @@ def run_single_its(
             {"train": metrics_train, "test": metrics_test},
             out / f"{model_name}_metrics.csv",
         )
+        save_diagnostics_table(diag, out / f"{model_name}_diagnostics.csv")
+        plot_residual_diagnostics(diag, fit_result, splits, out, model_name,
+                                  config=config)
         if not excess_table.obs_excess.empty:
             ate = calc_ate_summary(excess_table)
             save_ate_summary(ate, out / f"{model_name}_ate_summary.csv")
