@@ -99,9 +99,9 @@ class PipelineResult:
         dates, actual, predicted, conf_lo, conf_hi, pred_matrix, and
         n_successful.
     metrics_train : MetricsResult
-        RMSE, MAE, MAPE, and R2 computed on the training period.
+        RMSE, MAE, MAPE, and MASE computed on the training period.
     metrics_test : MetricsResult
-        RMSE, MAE, MAPE, and R2 computed on the test period.
+        RMSE, MAE, MAPE, and MASE computed on the test period.
     excess_table : ExcessResult
         Per-observation excess estimates with CIs for the holdout period.
         Pass to calc_ate_summary() to get total and per-observation ATE
@@ -109,8 +109,9 @@ class PipelineResult:
     config : dict
         Full resolved config dict used for this run.
     diagnostics : DiagnosticsResult or None
-        Residual diagnostics (Ljung-Box, Shapiro-Wilk, ACF lags). None if
-        diagnostics could not be computed.
+        Residual diagnostics (Ljung-Box, Shapiro-Wilk, the persisted ACF
+        vector with key lags {1, m}). None if diagnostics could not be
+        computed.
     series_frequency : SeriesFrequency or None
         Frequency resolved from the data (its2s.frequency), the single
         source for all window-unit interpretation.
