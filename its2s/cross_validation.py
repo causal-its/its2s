@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .data_prep import prepare_splits, resolve_split_config
 from .metrics.error_metrics import MetricsResult, compute_metrics
 from .settings import get_model_config, load_config
 
@@ -30,7 +31,12 @@ class CVFoldResult:
 
 @dataclass
 class CVResult:
-    """Aggregated cross-validation results."""
+    """Aggregated cross-validation results.
+
+    ``cv_end_date`` records the effective upper bound applied to the CV data,
+    whether derived by default from the run's held-out test split or passed
+    explicitly.
+    """
 
     model_name: str
     folds: list[CVFoldResult]
@@ -40,6 +46,7 @@ class CVResult:
     mean_r2: float
     std_rmse: float
     std_mae: float
+    cv_end_date: pd.Timestamp | None = None
 
     def summary(self):
         """Return a human-readable summary string."""
@@ -53,26 +60,79 @@ class CVResult:
         return "\n".join(lines)
 
 
+_CV_METHOD_ARGS = {
+    "observations": ("test_obs", "min_train_obs", "skip_obs"),
+    "percent":      ("test_pct", "min_train_pct", "skip_pct"),
+}
+
+
+def _default_cv_end_date(df, intervention_date, date_col, config):
+    """Derive the leakage-safe default cv_end_date from the run's test split.
+
+    Returns the first date of the held-out test window that prepare_splits
+    would produce for this df and the loaded config's "periods" section, so
+    that CV capped at the returned date never touches the window
+    run_single_its evaluates on (GH #40). The boundary is row-exact for every
+    split method and series frequency: prepare_splits is the single source of
+    truth for the window, so no calendar-unit conversion is involved. Falls
+    back to intervention_date (all pre-intervention data) when the derived
+    test window is empty, in which case there is nothing to protect.
+    """
+    method, split_kwargs = resolve_split_config(config["periods"])
+    # min_test_obs=0 disables the small-test-window guardrail here; the real
+    # run's prepare_splits call still warns (GH #29).
+    splits = prepare_splits(
+        df,
+        intervention_date,
+        date_col=date_col,
+        split_method=method,
+        min_test_obs=0,
+        **split_kwargs,
+    )
+    n_pre = int(
+        (pd.to_datetime(df[date_col]) < splits.intervention_date).sum())
+    if len(splits.test_df):
+        cv_end_date = splits.test_df[date_col].min()
+    else:
+        cv_end_date = splits.intervention_date
+    logger.info(
+        "cv_end_date not set: derived %s from the run's test split "
+        "(split_method=%s), reserving %d of %d pre-intervention rows for the "
+        "held-out test window. Pass cv_end_date=intervention_date to use all "
+        "pre-intervention data.",
+        cv_end_date.date(), method, len(splits.test_df), n_pre,
+    )
+    return cv_end_date
+
+
 def time_series_cv(df, intervention_date, model_name="arima",
-                   n_folds=5, test_days=90, min_train_days=365,
-                   skip_days=0, cv_end_date=None,
-                   split_method="days",
-                   test_pct=0.10, min_train_pct=0.50, skip_pct=0.0,
+                   n_folds=5, test_obs=None, min_train_obs=None,
+                   skip_obs=None, cv_end_date=None,
+                   split_method="observations",
+                   test_pct=None, min_train_pct=None, skip_pct=None,
                    date_col=None, target_col=None, covariate_cols=None,
                    config_path=None, config_overrides=None):
     """Evaluate a model using expanding-window time-series cross-validation.
 
-    Folds are non-overlapping by construction. Consecutive validation windows
-    are separated by `skip_days` (matching the R reference implementation's
-    `skip` parameter). The CV window can be capped at `cv_end_date` to prevent
-    tuning or evaluation folds from touching the held-out test period defined
-    by `run_single_its`.
+    All CV windows are sized in OBSERVATIONS (rows of the regular series),
+    never calendar days: fold boundaries are positional slices, so on a weekly
+    series ``test_obs=52`` spans one year. Calendar-day windows exist only in
+    ``prepare_splits``. Folds are non-overlapping by construction. Consecutive
+    validation windows are separated by ``skip_obs`` (matching the R reference
+    implementation's ``skip`` parameter). The CV frame is capped at
+    ``cv_end_date``, which by default is derived from the run's held-out test
+    split so tuning and evaluation folds never touch the window
+    ``run_single_its`` evaluates on (GH #40).
 
-    Fold layout (train = expanding, test = fixed width):
+    Only the window arguments belonging to the chosen ``split_method`` may be
+    passed; arguments for the other method raise ValueError rather than being
+    silently ignored.
 
-        |------ min_train_days ------|-- test_days --|-- skip_days --|-- test_days --|...
-        fold 1: train [0, T0),         test [T0, T0+test_days)
-        fold 2: train [0, T0+test_days+skip_days), test [T0+test_days+skip_days, ...)
+    Fold layout (train = expanding, test = fixed width, all in observations):
+
+        |------ min_train_obs ------|-- test_obs --|-- skip_obs --|-- test_obs --|...
+        fold 1: train [0, T0),        test [T0, T0+test_obs)
+        fold 2: train [0, T0+test_obs+skip_obs), test [T0+test_obs+skip_obs, ...)
         ...
 
     Parameters
@@ -80,24 +140,47 @@ def time_series_cv(df, intervention_date, model_name="arima",
     df : pd.DataFrame
         Full time series dataset.
     intervention_date : str or pd.Timestamp
-        CV uses only pre-intervention data (or data before cv_end_date if set).
+        CV uses only data before cv_end_date, which is at most the
+        intervention date.
     model_name : str
         Model to evaluate.
     n_folds : int
         Maximum number of CV folds to attempt.
-    test_days : int
-        Length of each validation window in days.
-    min_train_days : int
-        Minimum training window for the first fold.
-    skip_days : int
-        Gap in days between the end of one validation window and the start of
-        the next. Set to 0 for adjacent non-overlapping folds. The R reference
-        uses skip = "12 months" (365 days for daily data).
+    split_method : {"observations", "percent"}
+        "observations" (default): size the fold windows as explicit
+        observation counts via `test_obs`/`min_train_obs`/`skip_obs`.
+        "percent": size them as fractions of the CV data's observation count
+        via `test_pct`/`min_train_pct`/`skip_pct`.
+    test_obs : int
+        Length of each validation window in observations. Defaults to 90.
+        Only with ``split_method="observations"``.
+    min_train_obs : int
+        Minimum training window for the first fold, in observations.
+        Defaults to 365. Only with ``split_method="observations"``.
+    skip_obs : int
+        Gap in observations between the end of one validation window and the
+        start of the next. Set to 0 for adjacent non-overlapping folds. The R
+        reference uses skip = "12 months" (365 observations for daily data).
+        Defaults to 0. Only with ``split_method="observations"``.
+    test_pct : float
+        Validation window per fold as a fraction of the CV observations.
+        Defaults to 0.10. Only with ``split_method="percent"``.
+    min_train_pct : float
+        Minimum training window as a fraction of the CV observations.
+        Defaults to 0.50. Only with ``split_method="percent"``.
+    skip_pct : float
+        Gap between folds as a fraction of the CV observations. Defaults to
+        0.0. Only with ``split_method="percent"``.
     cv_end_date : str or pd.Timestamp, optional
         Upper bound on the data used for CV. Must be <= intervention_date.
-        Use intervention_date - test_days to keep CV folds out of the
-        held-out evaluation window used by run_single_its.
-        Defaults to intervention_date (all pre-intervention data).
+        Defaults to the first date of the held-out test window that
+        prepare_splits produces for this df and the loaded config's
+        "periods" section, so CV folds never touch the window
+        run_single_its evaluates on (GH #40). The derivation is row-exact
+        for every split method and series frequency; evaluate on the same
+        missing-handled DataFrame and periods config you will run with.
+        Pass cv_end_date=intervention_date explicitly to use all
+        pre-intervention data.
     date_col : str, optional
         Date column name. Defaults to config value.
     target_col : str, optional
@@ -114,6 +197,31 @@ def time_series_cv(df, intervention_date, model_name="arima",
     # Lazy import to avoid circular dependency
     from .pipeline import _get_model
 
+    if split_method == "days":
+        raise ValueError(
+            "CV windows are observation counts; use split_method="
+            "'observations' with test_obs/min_train_obs/skip_obs. "
+            "Calendar-day windows exist only in prepare_splits."
+        )
+    if split_method not in _CV_METHOD_ARGS:
+        raise ValueError(
+            f"split_method must be 'percent' or 'observations', "
+            f"got {split_method!r}."
+        )
+
+    passed = {"test_obs": test_obs, "min_train_obs": min_train_obs,
+              "skip_obs": skip_obs, "test_pct": test_pct,
+              "min_train_pct": min_train_pct, "skip_pct": skip_pct}
+    allowed = _CV_METHOD_ARGS[split_method]
+    foreign = [name for name, value in passed.items()
+               if value is not None and name not in allowed]
+    if foreign:
+        raise ValueError(
+            f"Arguments {foreign} do not apply to split_method="
+            f"{split_method!r}, which uses {list(allowed)}. Pass the "
+            "arguments for the chosen split_method only."
+        )
+
     config = load_config(config_path, config_overrides)
     date_col = date_col or config["data"]["date_col"]
     target_col = target_col or config["data"]["target_col"]
@@ -126,21 +234,27 @@ def time_series_cv(df, intervention_date, model_name="arima",
     df[date_col] = pd.to_datetime(df[date_col])
     df = df.sort_values(date_col).reset_index(drop=True)
 
-    # Determine upper bound for CV data
-    if cv_end_date is not None:
+    # Determine upper bound for CV data. The default is leakage-safe: derive
+    # the cap from the run's held-out test split so no fold touches the
+    # window run_single_its evaluates on (GH #40).
+    if cv_end_date is None:
+        cv_end_date = _default_cv_end_date(
+            df, intervention_date, date_col, config)
+    else:
         cv_end_date = pd.Timestamp(cv_end_date)
         if cv_end_date > intervention_date:
             raise ValueError(
                 f"cv_end_date ({cv_end_date.date()}) must be <= "
                 f"intervention_date ({intervention_date.date()})."
             )
-        cv_df = df[df[date_col] < cv_end_date].copy()
-    else:
-        cv_df = df[df[date_col] < intervention_date].copy()
+    cv_df = df[df[date_col] < cv_end_date].copy()
 
     n_cv = len(cv_df)
 
     if split_method == "percent":
+        test_pct = 0.10 if test_pct is None else test_pct
+        min_train_pct = 0.50 if min_train_pct is None else min_train_pct
+        skip_pct = 0.0 if skip_pct is None else skip_pct
         budget = min_train_pct + n_folds * test_pct
         if budget > 1.0:
             raise ValueError(
@@ -154,29 +268,33 @@ def time_series_cv(df, intervention_date, model_name="arima",
             raise ValueError(f"min_train_pct must be in (0, 1), got {min_train_pct}.")
         if skip_pct < 0 or skip_pct >= 1:
             raise ValueError(f"skip_pct must be in [0, 1), got {skip_pct}.")
-        test_days = max(1, int(round(test_pct * n_cv)))
-        min_train_days = max(1, int(round(min_train_pct * n_cv)))
-        skip_days = max(0, int(round(skip_pct * n_cv)))
-    elif split_method != "days":
-        raise ValueError(
-            f"split_method must be 'percent' or 'days', got {split_method!r}."
-        )
+        test_obs = max(1, int(round(test_pct * n_cv)))
+        min_train_obs = max(1, int(round(min_train_pct * n_cv)))
+        skip_obs = max(0, int(round(skip_pct * n_cv)))
+    else:
+        test_obs = 90 if test_obs is None else test_obs
+        min_train_obs = 365 if min_train_obs is None else min_train_obs
+        skip_obs = 0 if skip_obs is None else skip_obs
 
-    if n_cv < min_train_days + test_days:
+    if n_cv < min_train_obs + test_obs:
         raise ValueError(
-            f"Not enough pre-intervention data for CV. Need at least "
-            f"{min_train_days + test_days} rows, have {n_cv}."
+            f"Not enough data for CV: need at least "
+            f"{min_train_obs + test_obs} rows before cv_end_date "
+            f"({cv_end_date.date()}), have {n_cv}. By default cv_end_date is "
+            "derived from the run's held-out test window (config 'periods'); "
+            "pass cv_end_date=intervention_date to use all pre-intervention "
+            "data."
         )
 
     model_params = get_model_config(config, model_name)
     fold_results = []
 
     # Non-overlapping fold layout: each fold's test window starts at
-    # min_train_days + i * (test_days + skip_days), guaranteeing a gap of
-    # skip_days between the end of fold i and the start of fold i+1.
+    # min_train_obs + i * (test_obs + skip_obs), guaranteeing a gap of
+    # skip_obs between the end of fold i and the start of fold i+1.
     for i in range(n_folds):
-        test_start_idx = min_train_days + i * (test_days + skip_days)
-        test_end_idx = test_start_idx + test_days
+        test_start_idx = min_train_obs + i * (test_obs + skip_obs)
+        test_end_idx = test_start_idx + test_obs
 
         if test_end_idx > n_cv:
             break
@@ -222,6 +340,13 @@ def time_series_cv(df, intervention_date, model_name="arima",
     if not fold_results:
         raise RuntimeError("All CV folds failed. Check data and model.")
 
+    if len(fold_results) < n_folds:
+        logger.warning(
+            "Only %d of %d requested CV folds completed in %d rows before "
+            "cv_end_date %s; later folds did not fit or failed.",
+            len(fold_results), n_folds, n_cv, cv_end_date.date(),
+        )
+
     rmses = [f.metrics.rmse for f in fold_results]
     maes = [f.metrics.mae for f in fold_results]
     mapes = [f.metrics.mape for f in fold_results]
@@ -236,4 +361,5 @@ def time_series_cv(df, intervention_date, model_name="arima",
         mean_r2=float(np.mean(r2s)),
         std_rmse=float(np.std(rmses, ddof=1)) if len(rmses) > 1 else 0.0,
         std_mae=float(np.std(maes, ddof=1)) if len(maes) > 1 else 0.0,
+        cv_end_date=cv_end_date,
     )

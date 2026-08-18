@@ -23,7 +23,7 @@ associated with a reduction in the outcome.
 All output files are written to the `output_dir` you specify. File names include the
 `model_name` (e.g., `prophet_xgb`).
 
-### `{model}_excess.csv` — daily excess estimates
+### `{model}_excess.csv` — per-observation excess estimates
 
 One row per post-event time point.
 
@@ -46,14 +46,18 @@ One row per post-event time point.
 ### `{model}_excess_period.csv` — period-level aggregation
 
 One row per defined period. By default, one row for "Full holdout" covering the entire
-post-event window.
+post-event window. Custom sub-periods are defined via `excess_periods` in the config;
+each period is delimited in exactly one explicit unit family: `start_offset_days` /
+`end_offset_days` (calendar days from the holdout start, inclusive end) or
+`start_offset_obs` / `end_offset_obs` (observation counts into the holdout, inclusive
+end). See the `excess_periods` example in `params.yaml`.
 
 | Column | Description |
 |--------|-------------|
 | `period` | Period label (e.g., "Full holdout") |
 | `start_date` | First date of the period |
 | `end_date` | Last date of the period |
-| `n_days` | Number of days in the period |
+| `n_obs` | Number of observations (rows) in the period |
 | `total_observed` | Sum of observed values over the period |
 | `total_expected` | Sum of expected (counterfactual) values over the period |
 | `total_excess` | `total_observed` − `total_expected` |
@@ -69,11 +73,11 @@ Two rows summarizing the overall effect.
 
 | Column | Description |
 |--------|-------------|
-| `metric` | "Total ATE" or "Mean Daily ATE" |
+| `metric` | "Total ATE" or "Mean ATE per obs" |
 | `estimate` | Point estimate |
 | `ci_lo` | Lower bound of the 95% eCI |
 | `ci_hi` | Upper bound of the 95% eCI |
-| `n_days` | Number of post-event days in the summary |
+| `n_obs` | Number of post-event observations in the summary |
 
 Access programmatically:
 
@@ -127,8 +131,8 @@ to disk:
 ```python
 result = run_single_its(df, intervention_date="2022-06-01")
 
-# Daily excess table (ExcessResult)
-print(result.excess_table.daily_excess)
+# Per-observation excess table (ExcessResult)
+print(result.excess_table.obs_excess)
 
 # Period-level aggregation
 print(result.excess_table.period_excess)

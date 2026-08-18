@@ -43,8 +43,14 @@ class TestSettings:
         assert expected_keys.issubset(set(default_config.keys()))
 
     def test_default_config_values(self, default_config):
-        assert default_config["periods"]["test_days"] == 365
-        assert default_config["periods"]["holdout_days"] == 365
+        # periods ships NO window-family keys: defaults live in code
+        # (prepare_splits), because pre-set keys for every family would
+        # false-positive the cross-method check (GH #28, #54) and make the
+        # non-default methods unreachable through configuration.
+        for key in ("test_pct", "holdout_pct", "test_days", "holdout_days",
+                    "test_obs", "holdout_obs"):
+            assert key not in default_config["periods"]
+        assert default_config["periods"]["split_method"] == "percent"
         assert default_config["bootstrap"]["n_sim"] == 1000
         assert default_config["bootstrap"]["block_length"] == 14
         assert default_config["bootstrap"]["ci_level"] == 0.95
@@ -87,7 +93,7 @@ class TestDataPrep:
     def test_prepare_splits_basic(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
-        splits = prepare_splits(df, intv, test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
         train_max = splits.train_df["ds"].max()
         test_min = splits.test_df["ds"].min()
         test_max = splits.test_df["ds"].max()
@@ -98,7 +104,7 @@ class TestDataPrep:
     def test_prepare_splits_lengths(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
-        splits = prepare_splits(df, intv, test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
         assert len(splits.train_df) == 730  # 1095 - 365
         assert len(splits.test_df) == 365
         assert len(splits.holdout_df) == 365
@@ -106,14 +112,14 @@ class TestDataPrep:
     def test_prepare_splits_full_predict(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
-        splits = prepare_splits(df, intv, test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
         expected_len = len(splits.test_df) + len(splits.holdout_df)
         assert len(splits.full_predict_df) == expected_len
 
     def test_prepare_splits_string_date(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
-        splits = prepare_splits(df, str(intv), test_days=365, holdout_days=365)
+        splits = prepare_splits(df, str(intv), split_method="days", test_days=365, holdout_days=365)
         assert isinstance(splits.intervention_date, pd.Timestamp)
 
     def test_prepare_splits_custom_date_col(self):
@@ -121,25 +127,26 @@ class TestDataPrep:
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
         df = df.rename(columns={"ds": "date"})
         splits = prepare_splits(df, intv, date_col="date",
+                                split_method="days",
                                 test_days=365, holdout_days=365)
         assert "date" in splits.train_df.columns
 
     def test_prepare_splits_short_series(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=30, n_post=30)
-        splits = prepare_splits(df, intv, test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
         assert len(splits.train_df) == 0
 
     def test_prepare_splits_intervention_at_start(self):
         from its2s.data_prep import prepare_splits
         df, intv = make_intervention_at_boundary("start")
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         assert len(splits.train_df) == 0 or len(splits.test_df) == 0
 
     def test_prepare_splits_intervention_at_end(self):
         from its2s.data_prep import prepare_splits
         df, intv = make_intervention_at_boundary("end")
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         assert len(splits.holdout_df) <= 1
 
 
@@ -353,7 +360,7 @@ class TestBootstrap:
         from its2s.models.arima import ARIMAModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         model = ARIMAModel(params={"seasonal": False, "m": 1, "stepwise": True,
                                    "suppress_warnings": True})
         model.fit(splits.train_df)
@@ -370,7 +377,7 @@ class TestBootstrap:
         from its2s.models.arima import ARIMAModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         model = ARIMAModel(params={})
         mbb = MovingBlockBootstrap(n_sim=5, block_length=7, n_jobs=1)
         with pytest.raises(ValueError, match="fitted"):
@@ -424,7 +431,7 @@ class TestBlockLength:
 # Excess & ATE
 # ===================================================================
 class TestExcess:
-    def test_daily_excess_columns(self):
+    def test_obs_excess_columns(self):
         from its2s.metrics.excess import calculate_excess
         br = make_mock_bootstrap_result()
         intervention_date = pd.Timestamp("2021-01-31")
@@ -433,14 +440,14 @@ class TestExcess:
                          "expected_ci_hi", "excess", "excess_ci_lo",
                          "excess_ci_hi", "excess_pct", "excess_pct_ci_lo",
                          "excess_pct_ci_hi"}
-        assert expected_cols == set(result.daily_excess.columns)
+        assert expected_cols == set(result.obs_excess.columns)
 
-    def test_daily_excess_values(self):
+    def test_obs_excess_values(self):
         from its2s.metrics.excess import calculate_excess
         br = make_mock_bootstrap_result(actual_shift=10.0)
         intervention_date = pd.Timestamp("2021-01-31")
         result = calculate_excess(br, intervention_date)
-        mean_excess = result.daily_excess["excess"].mean()
+        mean_excess = result.obs_excess["excess"].mean()
         assert mean_excess > 5.0
 
     def test_period_excess_full_holdout(self):
@@ -451,23 +458,96 @@ class TestExcess:
         assert len(result.period_excess) >= 1
         assert "Full holdout" in result.period_excess["period"].values
 
-    def test_period_excess_custom_periods(self):
+    def test_period_excess_custom_periods_days(self):
         from its2s.metrics.excess import calculate_excess
         br = make_mock_bootstrap_result()
         intervention_date = pd.Timestamp("2021-01-31")
-        periods = [{"name": "First 7 days", "start_offset": 0, "end_offset": 7}]
+        periods = [{"name": "First 7 days",
+                    "start_offset_days": 0, "end_offset_days": 7}]
         result = calculate_excess(br, intervention_date, periods_config=periods)
         period_names = result.period_excess["period"].values
         assert "First 7 days" in period_names
         first7 = result.period_excess[result.period_excess["period"] == "First 7 days"]
-        assert first7["n_days"].values[0] == 8  # inclusive
+        assert first7["n_obs"].values[0] == 8  # inclusive
+
+    def test_period_excess_custom_periods_obs(self):
+        from its2s.metrics.excess import calculate_excess
+        # Weekly grid: obs and calendar days disagree, so this exercises the
+        # row-slicing family specifically (4 rows span 22 calendar days).
+        br = make_mock_bootstrap_result(freq="W-SUN")
+        dates = pd.to_datetime(br.dates)
+        intervention_date = dates[30]
+        periods = [{"name": "First 4 obs",
+                    "start_offset_obs": 0, "end_offset_obs": 3}]
+        result = calculate_excess(br, intervention_date, periods_config=periods)
+        first4 = result.period_excess[result.period_excess["period"] == "First 4 obs"]
+        assert first4["n_obs"].values[0] == 4
+        assert first4["start_date"].values[0] == dates[30]
+        assert first4["end_date"].values[0] == dates[33]
+
+    def test_period_excess_legacy_offset_keys_raise(self):
+        from its2s.metrics.excess import calculate_excess
+        br = make_mock_bootstrap_result()
+        intervention_date = pd.Timestamp("2021-01-31")
+        periods = [{"name": "Legacy", "start_offset": 0, "end_offset": 7}]
+        with pytest.raises(ValueError, match="no longer accepted"):
+            calculate_excess(br, intervention_date, periods_config=periods)
+
+    def test_period_excess_mixed_offset_units_raise(self):
+        from its2s.metrics.excess import calculate_excess
+        br = make_mock_bootstrap_result()
+        intervention_date = pd.Timestamp("2021-01-31")
+        periods = [{"name": "Mixed",
+                    "start_offset_days": 0, "end_offset_obs": 7}]
+        with pytest.raises(ValueError, match="mixes"):
+            calculate_excess(br, intervention_date, periods_config=periods)
+
+    def test_period_excess_missing_offsets_raise(self):
+        from its2s.metrics.excess import calculate_excess
+        br = make_mock_bootstrap_result()
+        intervention_date = pd.Timestamp("2021-01-31")
+        periods = [{"name": "No offsets"}]
+        with pytest.raises(ValueError, match="no offsets"):
+            calculate_excess(br, intervention_date, periods_config=periods)
+
+    def test_validate_excess_periods_standalone(self):
+        # The same key checks calculate_excess applies, available without
+        # data so the pipeline can reject a bad excess_periods section at
+        # input validation instead of after the fit and the bootstrap.
+        from its2s.metrics.excess import validate_excess_periods
+        validate_excess_periods(None)  # absent section: fine
+        validate_excess_periods([])    # empty section: fine
+        validate_excess_periods([{"name": "ok",
+                                  "start_offset_obs": 0,
+                                  "end_offset_obs": 3}])
+        with pytest.raises(ValueError, match="no longer accepted"):
+            validate_excess_periods([{"name": "Legacy",
+                                      "start_offset": 0, "end_offset": 7}])
+        with pytest.raises(ValueError, match="mixes"):
+            validate_excess_periods([{"name": "Mixed",
+                                      "start_offset_days": 0,
+                                      "end_offset_obs": 7}])
+        with pytest.raises(ValueError, match="no offsets"):
+            validate_excess_periods([{"name": "No offsets"}])
+
+    def test_pipeline_rejects_bad_excess_periods_before_fitting(self):
+        # A stale excess_periods config must fail at input validation, in
+        # seconds -- not after the model fit and the full bootstrap.
+        from its2s.pipeline import run_single_its
+        df, intv, _ = make_daily_series(n_pre=120, n_post=30, seed=0)
+        with pytest.raises(ValueError, match="no longer accepted"):
+            run_single_its(
+                df, intv, model_name="arima",
+                config_overrides={"excess_periods": [
+                    {"name": "Legacy", "start_offset": 0, "end_offset": 30}]},
+            )
 
     def test_excess_no_holdout(self):
         from its2s.metrics.excess import calculate_excess
         br = make_mock_bootstrap_result()
         future_date = pd.Timestamp("2025-01-01")
         result = calculate_excess(br, future_date)
-        assert result.daily_excess.empty
+        assert result.obs_excess.empty
         assert result.period_excess.empty
 
     def test_excess_pct_calculation(self):
@@ -475,7 +555,7 @@ class TestExcess:
         br = make_mock_bootstrap_result(base_predicted=100.0, actual_shift=10.0)
         intervention_date = pd.Timestamp("2021-01-31")
         result = calculate_excess(br, intervention_date)
-        row = result.daily_excess.iloc[0]
+        row = result.obs_excess.iloc[0]
         if row["expected"] != 0:
             expected_pct = row["excess"] / row["expected"] * 100
             assert row["excess_pct"] == pytest.approx(expected_pct, rel=1e-6)
@@ -485,20 +565,20 @@ class TestExcess:
         br = make_mock_bootstrap_result()
         intervention_date = pd.Timestamp("2021-01-31")
         excess = calculate_excess(br, intervention_date)
-        ate = calc_ate_summary(excess.daily_excess)
+        ate = calc_ate_summary(excess.obs_excess)
         assert len(ate) == 2
-        assert set(ate["metric"].values) == {"Total ATE", "Mean Daily ATE"}
+        assert set(ate["metric"].values) == {"Total ATE", "Mean ATE per obs"}
 
     def test_calc_ate_summary_values(self):
         from its2s.metrics.excess import calc_ate_summary, calculate_excess
         br = make_mock_bootstrap_result(actual_shift=10.0)
         intervention_date = pd.Timestamp("2021-01-31")
         excess = calculate_excess(br, intervention_date)
-        ate = calc_ate_summary(excess.daily_excess)
+        ate = calc_ate_summary(excess.obs_excess)
         total = ate[ate["metric"] == "Total ATE"]["estimate"].values[0]
-        mean_daily = ate[ate["metric"] == "Mean Daily ATE"]["estimate"].values[0]
-        n = len(excess.daily_excess)
-        assert mean_daily == pytest.approx(total / n, rel=1e-6)
+        mean_per_obs = ate[ate["metric"] == "Mean ATE per obs"]["estimate"].values[0]
+        n = len(excess.obs_excess)
+        assert mean_per_obs == pytest.approx(total / n, rel=1e-6)
 
     def test_calc_ate_summary_empty(self):
         from its2s.metrics.excess import calc_ate_summary
@@ -614,7 +694,7 @@ class TestOutputs:
         )
         mr = MetricsResult(rmse=1.0, mae=0.8, mape=5.0, smape=4.5, mase=0.9, r2=0.95)
         er = ExcessResult(
-            daily_excess=pd.DataFrame({
+            obs_excess=pd.DataFrame({
                 "date": pd.date_range("2021-01-31", periods=10),
                 "observed": np.full(10, 110.0),
                 "expected": np.full(10, 100.0),
@@ -631,7 +711,7 @@ class TestOutputs:
                 "period": ["Full holdout"],
                 "start_date": [pd.Timestamp("2021-01-31")],
                 "end_date": [pd.Timestamp("2021-02-09")],
-                "n_days": [10],
+                "n_obs": [10],
                 "total_observed": [1100.0],
                 "total_expected": [1000.0],
                 "total_excess": [100.0],
@@ -655,7 +735,7 @@ class TestOutputs:
         from its2s.data_prep import prepare_splits
         pr, _, _ = self._make_minimal_pipeline_result()
         df, intv, _ = make_short_series(n_pre=60, n_post=30)
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         save_path = tmp_path / "test_plot.png"
         plot_counterfactual(pr, splits, save_path=save_path)
         assert save_path.exists()
@@ -667,7 +747,7 @@ class TestOutputs:
         import matplotlib.figure
         pr, _, _ = self._make_minimal_pipeline_result()
         df, intv, _ = make_short_series(n_pre=60, n_post=30)
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         fig = plot_counterfactual(pr, splits, save_path=None)
         assert isinstance(fig, matplotlib.figure.Figure)
 
@@ -678,7 +758,7 @@ class TestOutputs:
 
         pr, _, _ = self._make_minimal_pipeline_result()
         df, intv, _ = make_short_series(n_pre=60, n_post=30)
-        splits = prepare_splits(df, intv, test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
         config = {
             "output": {
                 "plot_colors": ["#984136", "#c26a7a", "#ecc0a1", "#f0f0e4"],
@@ -735,7 +815,7 @@ class TestOutputs:
         from its2s.outputs.tables import save_ate_summary
         from its2s.metrics.excess import calc_ate_summary
         _, _, er = self._make_minimal_pipeline_result()
-        ate = calc_ate_summary(er.daily_excess)
+        ate = calc_ate_summary(er.obs_excess)
         path = tmp_path / "ate.csv"
         save_ate_summary(ate, path)
         assert path.exists()
@@ -789,12 +869,14 @@ class TestBatch:
             {"series_id": "s1", "df": df1, "intervention_date": intv1,
              "model_name": "arima",
              "config_overrides": {"bootstrap": {"n_sim": 5, "n_jobs": 1},
-                                  "periods": {"test_days": 30, "holdout_days": 30},
+                                  "periods": {"split_method": "days",
+                                              "test_days": 30, "holdout_days": 30},
                                   "models": {"arima": {"seasonal": False, "m": 1}}}},
             {"series_id": "s2", "df": df2, "intervention_date": intv2,
              "model_name": "arima",
              "config_overrides": {"bootstrap": {"n_sim": 5, "n_jobs": 1},
-                                  "periods": {"test_days": 30, "holdout_days": 30},
+                                  "periods": {"split_method": "days",
+                                              "test_days": 30, "holdout_days": 30},
                                   "models": {"arima": {"seasonal": False, "m": 1}}}},
         ]
         results = run_batch(series_list, output_dir=str(tmp_path), n_jobs=1, seed=42)
@@ -825,7 +907,7 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv, CVResult
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=600)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
+                                n_folds=3, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         assert isinstance(result, CVResult)
 
@@ -833,7 +915,7 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=601)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
+                                n_folds=3, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         assert result.model_name == "arima"
 
@@ -841,7 +923,7 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=602)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
+                                n_folds=3, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         assert len(result.folds) <= 3
         assert len(result.folds) >= 1
@@ -850,7 +932,7 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=603)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
+                                n_folds=3, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         assert np.isfinite(result.mean_rmse)
         assert result.mean_rmse > 0
@@ -859,7 +941,7 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=604)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
+                                n_folds=3, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         train_sizes = [f.n_train for f in result.folds]
         assert train_sizes == sorted(train_sizes)
@@ -868,7 +950,7 @@ class TestCrossValidation:
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=605)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=2, test_days=60, min_train_days=180,
+                                n_folds=2, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         s = result.summary()
         assert isinstance(s, str)
@@ -880,14 +962,46 @@ class TestCrossValidation:
         df, intv, _ = make_short_series(n_pre=30, n_post=10, seed=606)
         with pytest.raises(ValueError, match="Not enough"):
             time_series_cv(df, intv, model_name="arima",
-                           n_folds=3, test_days=60, min_train_days=365,
+                           n_folds=3, test_obs=60, min_train_obs=365,
+                           config_overrides=self._CV_CFG)
+
+    def test_split_method_days_raises(self):
+        # CV windows are observation counts; "days" exists only in
+        # prepare_splits (GH #39).
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=619)
+        with pytest.raises(ValueError, match="observation counts"):
+            time_series_cv(df, intv, model_name="arima",
+                           split_method="days",
+                           config_overrides=self._CV_CFG)
+
+    def test_pct_args_under_observations_raise(self):
+        # Cross-method window args raise instead of being silently
+        # ignored (GH #55).
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=619)
+        with pytest.raises(ValueError, match="test_pct"):
+            time_series_cv(df, intv, model_name="arima",
+                           n_folds=2, test_obs=60, min_train_obs=180,
+                           test_pct=0.10,
+                           config_overrides=self._CV_CFG)
+
+    def test_obs_args_under_percent_raise(self):
+        # The reverse direction: obs args under split_method="percent"
+        # used to be overwritten by pct-derived values (GH #55).
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=619)
+        with pytest.raises(ValueError, match="min_train_obs"):
+            time_series_cv(df, intv, model_name="arima",
+                           n_folds=2, split_method="percent",
+                           min_train_obs=180,
                            config_overrides=self._CV_CFG)
 
     def test_fold_result_fields(self):
         from its2s.cross_validation import time_series_cv, CVFoldResult
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=607)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=2, test_days=60, min_train_days=180,
+                                n_folds=2, test_obs=60, min_train_obs=180,
                                 config_overrides=self._CV_CFG)
         for fold in result.folds:
             assert isinstance(fold, CVFoldResult)
@@ -895,15 +1009,15 @@ class TestCrossValidation:
             assert fold.n_test > 0
             assert fold.train_end < fold.test_start
 
-    # --- skip_days: non-overlapping fold windows ---
+    # --- skip_obs: non-overlapping fold windows ---
 
-    def test_skip_days_zero_folds_are_adjacent(self):
-        # With skip_days=0, fold i+1 test starts exactly where fold i test ends.
+    def test_skip_obs_zero_folds_are_adjacent(self):
+        # With skip_obs=0, fold i+1 test starts exactly where fold i test ends.
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=610)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
-                                skip_days=0, config_overrides=self._CV_CFG)
+                                n_folds=3, test_obs=60, min_train_obs=180,
+                                skip_obs=0, config_overrides=self._CV_CFG)
         for i in range(len(result.folds) - 1):
             gap = (result.folds[i + 1].test_start
                    - result.folds[i].test_end).days
@@ -911,28 +1025,28 @@ class TestCrossValidation:
             # start of next is the following day) or 0 if timestamps coincide.
             assert gap <= 1, f"Folds {i} and {i+1} have unexpected gap {gap}"
 
-    def test_skip_days_nonzero_enforces_gap(self):
+    def test_skip_obs_nonzero_enforces_gap(self):
         from its2s.cross_validation import time_series_cv
         skip = 30
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=611)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
-                                skip_days=skip, config_overrides=self._CV_CFG)
+                                n_folds=3, test_obs=60, min_train_obs=180,
+                                skip_obs=skip, config_overrides=self._CV_CFG)
         for i in range(len(result.folds) - 1):
             gap = (result.folds[i + 1].test_start
                    - result.folds[i].test_end).days
             assert gap >= skip - 1, (
                 f"Gap between folds {i} and {i+1} ({gap} days) "
-                f"should be >= skip_days ({skip})"
+                f"should be >= skip_obs ({skip})"
             )
 
-    def test_skip_days_folds_never_overlap(self):
+    def test_skip_obs_folds_never_overlap(self):
         # No two fold test windows should share any dates.
         from its2s.cross_validation import time_series_cv
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=612)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=4, test_days=60, min_train_days=180,
-                                skip_days=0, config_overrides=self._CV_CFG)
+                                n_folds=4, test_obs=60, min_train_obs=180,
+                                skip_obs=0, config_overrides=self._CV_CFG)
         for i in range(len(result.folds) - 1):
             assert result.folds[i].test_end < result.folds[i + 1].test_start, (
                 f"Fold {i} test end ({result.folds[i].test_end}) "
@@ -947,7 +1061,7 @@ class TestCrossValidation:
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=613)
         cv_end = intv - pd.Timedelta(days=90)
         result = time_series_cv(df, intv, model_name="arima",
-                                n_folds=3, test_days=60, min_train_days=180,
+                                n_folds=3, test_obs=60, min_train_obs=180,
                                 cv_end_date=cv_end,
                                 config_overrides=self._CV_CFG)
         for fold in result.folds:
@@ -960,23 +1074,133 @@ class TestCrossValidation:
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=614)
         with pytest.raises(ValueError, match="cv_end_date"):
             time_series_cv(df, intv, model_name="arima",
-                           n_folds=2, test_days=60, min_train_days=180,
+                           n_folds=2, test_obs=60, min_train_obs=180,
                            cv_end_date=intv + pd.Timedelta(days=10),
                            config_overrides=self._CV_CFG)
 
-    def test_cv_end_date_none_uses_intervention_date(self):
-        # Default (cv_end_date=None) should behave identically to passing
-        # cv_end_date=intervention_date.
+    def test_cv_end_date_none_derives_test_boundary(self):
+        # Default (cv_end_date=None) derives the start of the held-out test
+        # window from the run's split config (GH #40): identical to passing
+        # that boundary explicitly, and NOT identical to using all
+        # pre-intervention data.
         from its2s.cross_validation import time_series_cv
-        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=615)
-        r1 = time_series_cv(df, intv, model_name="arima",
-                            n_folds=2, test_days=60, min_train_days=180,
-                            cv_end_date=None, config_overrides=self._CV_CFG)
-        r2 = time_series_cv(df, intv, model_name="arima",
-                            n_folds=2, test_days=60, min_train_days=180,
-                            cv_end_date=intv, config_overrides=self._CV_CFG)
-        assert len(r1.folds) == len(r2.folds)
-        assert abs(r1.mean_rmse - r2.mean_rmse) < 1e-9
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_daily_series(n_pre=300, n_post=90, seed=615)
+        boundary = prepare_splits(df, intv).test_df["ds"].min()
+        r_none = time_series_cv(df, intv, model_name="arima",
+                                n_folds=2, test_obs=60, min_train_obs=180,
+                                cv_end_date=None,
+                                config_overrides=self._CV_CFG)
+        r_boundary = time_series_cv(df, intv, model_name="arima",
+                                    n_folds=2, test_obs=60, min_train_obs=180,
+                                    cv_end_date=boundary,
+                                    config_overrides=self._CV_CFG)
+        r_all_pre = time_series_cv(df, intv, model_name="arima",
+                                   n_folds=2, test_obs=60, min_train_obs=180,
+                                   cv_end_date=intv,
+                                   config_overrides=self._CV_CFG)
+        assert r_none.cv_end_date == boundary
+        assert len(r_none.folds) == len(r_boundary.folds)
+        assert abs(r_none.mean_rmse - r_boundary.mean_rmse) < 1e-9
+        assert len(r_all_pre.folds) > len(r_none.folds)
+
+    def test_cv_default_excludes_run_test_window(self):
+        # With everything at defaults, no CV fold may touch the window
+        # prepare_splits reserves for run_single_its evaluation (GH #40).
+        from its2s.cross_validation import time_series_cv
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_daily_series(n_pre=300, n_post=90, seed=616)
+        boundary = prepare_splits(df, intv).test_df["ds"].min()
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=2, test_obs=60, min_train_obs=180,
+                                config_overrides=self._CV_CFG)
+        for fold in result.folds:
+            assert fold.test_end < boundary, (
+                f"Fold test_end {fold.test_end} reached the run's held-out "
+                f"test window starting {boundary}"
+            )
+
+    def test_cv_default_weekly_row_exact(self):
+        # On a weekly grid the derived cap equals the run's test boundary
+        # (row-exact) and DIFFERS from the naive calendar back-off
+        # intervention - Timedelta(days=n_test) that GH #40 retired.
+        from its2s.cross_validation import time_series_cv
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_weekly_series(n_pre_weeks=156, n_post_weeks=26,
+                                         seed=617)
+        splits = prepare_splits(df, intv)
+        boundary = splits.test_df["ds"].min()
+        n_test = len(splits.test_df)
+        assert boundary != intv - pd.Timedelta(days=n_test)
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=2, test_obs=20, min_train_obs=60,
+                                config_overrides=self._CV_CFG)
+        assert result.cv_end_date == boundary
+        for fold in result.folds:
+            assert fold.test_end < boundary
+
+    def test_cv_default_days_method_config(self):
+        # A days-method periods config drives the derivation row-exactly on
+        # a weekly grid: the cap is the first row of the calendar window.
+        from its2s.cross_validation import time_series_cv
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_weekly_series(n_pre_weeks=156, n_post_weeks=26,
+                                         seed=618)
+        overrides = dict(self._CV_CFG)
+        overrides["periods"] = {"split_method": "days",
+                                "test_days": 180, "holdout_days": 60}
+        boundary = prepare_splits(df, intv, split_method="days",
+                                  test_days=180, holdout_days=60,
+                                  min_test_obs=0).test_df["ds"].min()
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=2, test_obs=20, min_train_obs=60,
+                                config_overrides=overrides)
+        assert result.cv_end_date == boundary
+        for fold in result.folds:
+            assert fold.test_end < boundary
+
+    def test_cv_end_date_explicit_intervention_reproduces_old_behavior(self):
+        # The escape hatch: cv_end_date=intervention_date uses all
+        # pre-intervention data, so a fold CAN land inside the run's
+        # held-out test window (the pre-GH-#40 layout).
+        from its2s.cross_validation import time_series_cv
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_daily_series(n_pre=300, n_post=90, seed=619)
+        boundary = prepare_splits(df, intv).test_df["ds"].min()
+        result = time_series_cv(df, intv, model_name="arima",
+                                n_folds=2, test_obs=60, min_train_obs=180,
+                                cv_end_date=intv,
+                                config_overrides=self._CV_CFG)
+        assert max(f.test_end for f in result.folds) >= boundary
+
+    def test_cv_result_records_effective_cv_end_date(self):
+        # CVResult carries the effective cap for both paths.
+        from its2s.cross_validation import time_series_cv
+        from its2s.data_prep import prepare_splits
+        df, intv, _ = make_daily_series(n_pre=300, n_post=90, seed=621)
+        r_derived = time_series_cv(df, intv, model_name="arima",
+                                   n_folds=2, test_obs=60, min_train_obs=180,
+                                   config_overrides=self._CV_CFG)
+        assert (r_derived.cv_end_date
+                == prepare_splits(df, intv).test_df["ds"].min())
+        explicit = intv - pd.Timedelta(days=90)
+        r_explicit = time_series_cv(df, intv, model_name="arima",
+                                    n_folds=2, test_obs=60,
+                                    min_train_obs=120,
+                                    cv_end_date=explicit,
+                                    config_overrides=self._CV_CFG)
+        assert r_explicit.cv_end_date == explicit
+
+    def test_insufficient_data_error_names_cv_end_date(self):
+        # Fixed observation windows that fit the full pre period but not
+        # the capped frame raise, and the message names the cap and the
+        # escape hatch.
+        from its2s.cross_validation import time_series_cv
+        df, intv, _ = make_daily_series(n_pre=300, n_post=90, seed=622)
+        with pytest.raises(ValueError, match="cv_end_date"):
+            time_series_cv(df, intv, model_name="arima",
+                           n_folds=2, test_obs=60, min_train_obs=200,
+                           config_overrides=self._CV_CFG)
 
     # --- percent-based CV ---
 
@@ -1010,7 +1234,8 @@ class TestCompare:
 
     _COMPARE_CFG = {
         "bootstrap": {"n_sim": 5, "n_jobs": 1},
-        "periods": {"test_days": 30, "holdout_days": 30},
+        "periods": {"split_method": "days",
+                    "test_days": 30, "holdout_days": 30},
         "models": {"arima": {"seasonal": False, "m": 1, "stepwise": True,
                               "suppress_warnings": True}},
     }

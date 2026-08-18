@@ -26,24 +26,40 @@ all anchored on `intervention_date`:
 
 | Period | Role |
 |--------|------|
-| **Training** | Historical baseline used to fit each candidate model. Ends `test_days + holdout_days` before `intervention_date`. |
-| **Testing** (pre-event) | Held-out pre-event window used for model selection only. Spans `test_days` days immediately before `intervention_date`. Must not include the event. |
-| **Post-event** | During and after the intervention. The selected model predicts the counterfactual here. Spans `holdout_days` days after `intervention_date`. |
+| **Training** | Historical baseline used to fit each candidate model. Ends where the test window begins. |
+| **Testing** (pre-event) | Held-out pre-event window used for model selection only. Sits immediately before `intervention_date`. Must not include the event. |
+| **Post-event** | During and after the intervention. The selected model predicts the counterfactual here. |
+
+Window units are explicit per split method. `"percent"` and `"observations"` size
+windows in observations (rows of the regular series); `"days"` sizes them in calendar
+days, so on a weekly series `test_days=365` spans about 52 observations. Passing an
+argument that belongs to a different `split_method` raises an error rather than being
+silently ignored.
 
 Key configuration parameters (set in `params.yaml` or via `config_overrides`):
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `periods.split_method` | `"percent"` | `"percent"` (default) sizes test/holdout windows as fractions of the data; `"days"` uses explicit day counts |
-| `periods.test_pct` | 0.20 | Fraction of pre-intervention rows used as the test window (`split_method="percent"`) |
-| `periods.holdout_pct` | 1.0 | Fraction of post-intervention rows used as the holdout window (`split_method="percent"`) |
-| `periods.test_days` | 365 | Pre-event test window in days (`split_method="days"`) |
-| `periods.holdout_days` | 365 | Post-event projection window in days (`split_method="days"`) |
+| `periods.split_method` | `"percent"` | `"percent"` (default) sizes windows as fractions of the available observations; `"days"` uses calendar-day counts; `"observations"` uses explicit observation counts |
+| `periods.test_pct` | 0.20 | Fraction of pre-intervention observations used as the test window (`split_method="percent"`) |
+| `periods.holdout_pct` | 1.0 | Fraction of post-intervention observations used as the holdout window (`split_method="percent"`) |
+| `periods.test_days` | 365 | Pre-event test window in calendar days (`split_method="days"`) |
+| `periods.holdout_days` | 365 | Post-event projection window in calendar days (`split_method="days"`) |
+| `periods.test_obs` | none (required) | Pre-event test window in observations (`split_method="observations"`) |
+| `periods.holdout_obs` | none (required) | Post-event projection window in observations (`split_method="observations"`) |
+| `periods.min_test_obs` | 30 | Warn when the realized test window has fewer observations, whatever the split method; 0 disables |
 
 The percent-based default sizes the test window proportionally to the available
 pre-intervention data, so the pipeline runs without manual tuning on short series. Use
 `split_method="days"` when the test/holdout window length must match a fixed calendar
-duration (e.g., a pre-registered analysis specifying a 365-day post-event window).
+duration (e.g., a pre-registered analysis specifying a 365-day post-event window), and
+`split_method="observations"` when it must contain an exact number of observations
+(e.g., a 78-week test window on weekly data). The resulting train/test/holdout sizes
+are logged at run time as observation counts and percentages, so a mis-sized window is
+visible immediately. Independently of the split method, a warning fires when the
+realized test window ends up smaller than `periods.min_test_obs` (default 30): test
+metrics computed on very few points are unstable and can mislead model selection,
+regardless of how the small window arose.
 
 The test period is used only for model selection — it is never used to fit the final
 model. The final model is calibrated on the full pre-event dataset (training + test)
@@ -77,8 +93,13 @@ frequencies, but requires configuration adjustments:
   seasonal cycle. For weekly data, set `m=52`; for monthly data, set `m=12`. Override
   via `config_overrides={"models": {"arima": {"m": 52}}}`.
 
-- **NeuralProphet frequency**: the default `freq="D"` (daily). Override via
-  `config_overrides={"models": {"neuralprophet": {"freq": "W"}}}` for weekly data.
+- **Series frequency**: resolved automatically from the date column and passed to any
+  model that needs it (currently NeuralProphet). There is no `freq` setting to
+  declare. The resolver requires the series to be a complete, regularly spaced grid:
+  gaps, duplicate dates, or irregular spacing raise an error naming the first
+  offending timestamp. Note this also applies after `missing_data="drop"` removes
+  rows -- a mid-series drop creates a gap; fill or aggregate to a regular grid
+  instead.
 
 - **Block length**: the default MBB block length (`bootstrap.block_length=14`) was
   derived for daily data. For other frequencies, this value may need to be adjusted

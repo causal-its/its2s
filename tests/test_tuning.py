@@ -23,7 +23,7 @@ from its2s.tuning import (
 
 @pytest.fixture
 def short_daily_series():
-    """Synthetic daily series with enough data for 2-fold CV (min_train_days=400)."""
+    """Synthetic daily series with enough data for 2-fold CV (min_train_obs=400)."""
     rng = np.random.default_rng(0)
     n = 900
     dates = pd.date_range("2018-01-01", periods=n, freq="D")
@@ -135,8 +135,9 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            split_method="observations",
+            test_obs=60,
+            min_train_obs=400,
             n_jobs=1,
             seed=0,
         )
@@ -149,8 +150,9 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            split_method="observations",
+            test_obs=60,
+            min_train_obs=400,
             n_jobs=1,
             seed=0,
         )
@@ -168,8 +170,9 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            split_method="observations",
+            test_obs=60,
+            min_train_obs=400,
             n_jobs=1,
             seed=0,
         )
@@ -182,8 +185,9 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            split_method="observations",
+            test_obs=60,
+            min_train_obs=400,
             n_jobs=1,
             seed=0,
         )
@@ -198,8 +202,9 @@ class TestTuneModel:
             model_name="prophet_xgb",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            split_method="observations",
+            test_obs=60,
+            min_train_obs=400,
             n_jobs=1,
             seed=0,
         )
@@ -215,8 +220,9 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            split_method="observations",
+            test_obs=60,
+            min_train_obs=400,
             metric="mae",
             n_jobs=1,
             seed=0,
@@ -239,8 +245,9 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            split_method="observations",
+            test_obs=60,
+            min_train_obs=400,
             n_jobs=1,
             seed=0,
         )
@@ -255,8 +262,9 @@ class TestTuneModel:
                 model_name="not_a_model",
                 n_trials=2,
                 n_folds=2,
-                test_days=60,
-                min_train_days=400,
+                split_method="observations",
+                test_obs=60,
+                min_train_obs=400,
             )
 
     def test_invalid_metric_raises(self, short_daily_series):
@@ -267,8 +275,9 @@ class TestTuneModel:
                 model_name="arima",
                 n_trials=2,
                 n_folds=2,
-                test_days=60,
-                min_train_days=400,
+                split_method="observations",
+                test_obs=60,
+                min_train_obs=400,
                 metric="mape",
             )
 
@@ -279,8 +288,9 @@ class TestTuneModel:
             model_name="arima",
             n_trials=3,
             n_folds=2,
-            test_days=60,
-            min_train_days=400,
+            split_method="observations",
+            test_obs=60,
+            min_train_obs=400,
             seed=77,
         )
         assert result.model_name == "arima"
@@ -315,13 +325,24 @@ class TestTuneModel:
 
 class TestTuningConfig:
     def test_tuning_section_in_default_config(self):
-        from its2s.settings import load_config
+        # The shipped config sets NO window family: family defaults live in
+        # code (get_tuning_config), because pre-set keys for either family
+        # would false-positive the cross-method check (GH #55) and make the
+        # other family unreachable through configuration.
+        from its2s.settings import get_tuning_config, load_config
         cfg = load_config()
         assert "tuning" in cfg
         assert cfg["tuning"]["n_folds"] == 5
-        assert cfg["tuning"]["test_days"] == 365
-        assert cfg["tuning"]["min_train_days"] == 730
+        assert cfg["tuning"]["split_method"] == "percent"
+        for key in ("test_pct", "min_train_pct", "skip_pct",
+                    "test_obs", "min_train_obs", "skip_obs"):
+            assert key not in cfg["tuning"]
         assert cfg["tuning"]["metric"] == "rmse"
+        # The code defaults still resolve for the shipped percent method.
+        tc = get_tuning_config(cfg)
+        assert tc["test_pct"] == 0.10
+        assert tc["min_train_pct"] == 0.50
+        assert tc["skip_pct"] == 0.0
 
     def test_get_tuning_config(self):
         from its2s.settings import get_tuning_config, load_config
@@ -337,3 +358,149 @@ class TestTuningConfig:
         tc["n_folds"] = 999
         cfg2 = load_config()
         assert cfg2["tuning"]["n_folds"] == 5  # original unaffected
+
+    def test_legacy_day_keys_raise(self):
+        # CV windows are observation counts (GH #39); day-named tuning keys
+        # raise instead of being silently reinterpreted.
+        from its2s.settings import get_tuning_config, load_config
+        cfg = load_config()
+        cfg["tuning"]["min_train_days"] = 730
+        with pytest.raises(ValueError, match="min_train_days"):
+            get_tuning_config(cfg)
+
+    def test_cross_method_keys_raise(self):
+        # Keys from the non-selected window family raise instead of being
+        # silently ignored (GH #55).
+        from its2s.settings import get_tuning_config, load_config
+        cfg = load_config()
+        cfg["tuning"]["test_obs"] = 60  # split_method is percent
+        with pytest.raises(ValueError, match="test_obs"):
+            get_tuning_config(cfg)
+
+    def test_observations_method_reachable_via_config(self):
+        # Regression: the shipped params.yaml must not pre-set pct keys, or
+        # the cross-method check false-positives on defaults the user never
+        # wrote and split_method 'observations' becomes unreachable through
+        # configuration.
+        from its2s.settings import get_tuning_config, load_config
+        cfg = load_config(overrides={"tuning": {
+            "split_method": "observations",
+            "test_obs": 60, "min_train_obs": 400, "skip_obs": 0}})
+        tc = get_tuning_config(cfg)
+        assert tc["split_method"] == "observations"
+        assert (tc["test_obs"], tc["min_train_obs"], tc["skip_obs"]) == \
+            (60, 400, 0)
+        assert "test_pct" not in tc
+
+
+# ---------------------------------------------------------------------------
+# Cross-method window arguments raise (GH #55)
+# ---------------------------------------------------------------------------
+
+class TestTuneModelCrossMethodArgs:
+    def _df(self):
+        dates = pd.date_range("2020-01-01", periods=600, freq="D")
+        return pd.DataFrame({"ds": dates, "y": np.arange(600.0)})
+
+    def test_obs_args_under_percent_raise(self):
+        # The pre-fix behavior: obs args under the default percent method
+        # were silently discarded. Now they raise.
+        with pytest.raises(ValueError, match="test_obs"):
+            tune_model(
+                self._df(), intervention_date="2021-06-01",
+                model_name="arima", n_trials=2, n_folds=2,
+                test_obs=60, min_train_obs=400,
+            )
+
+    def test_pct_args_under_observations_raise(self):
+        with pytest.raises(ValueError, match="test_pct"):
+            tune_model(
+                self._df(), intervention_date="2021-06-01",
+                model_name="arima", n_trials=2, n_folds=2,
+                split_method="observations",
+                test_obs=60, min_train_obs=400,
+                test_pct=0.10,
+            )
+
+
+# ---------------------------------------------------------------------------
+# cv_end_date: leakage-safe derived default (GH #40)
+# ---------------------------------------------------------------------------
+
+class TestTuneModelCvEndDate:
+    """tune_model resolves cv_end_date once, upfront, and records it."""
+
+    INTV = "2021-06-01"
+
+    def _df(self):
+        dates = pd.date_range("2020-01-01", periods=600, freq="D")
+        return pd.DataFrame({"ds": dates, "y": np.arange(600.0)})
+
+    def _stub_cv(self, monkeypatch):
+        # Recording stub: tune_model's contract with time_series_cv is
+        # exercised without fitting any model.
+        from its2s.cross_validation import CVResult
+        calls = []
+
+        def fake_cv(df, intervention_date, model_name,
+                    config_overrides=None, **cv_kwargs):
+            calls.append({"config_overrides": config_overrides, **cv_kwargs})
+            return CVResult(model_name=model_name, folds=[], mean_rmse=1.0,
+                            mean_mae=1.0, mean_mape=1.0, mean_r2=0.0,
+                            std_rmse=0.0, std_mae=0.0)
+
+        monkeypatch.setattr("its2s.tuning.time_series_cv", fake_cv)
+        return calls
+
+    def test_derives_cv_end_date_when_none(self, monkeypatch):
+        from its2s.data_prep import prepare_splits
+        calls = self._stub_cv(monkeypatch)
+        df = self._df()
+        expected = prepare_splits(df, self.INTV).test_df["ds"].min()
+        result = tune_model(df, self.INTV, "arima", n_trials=2, n_folds=2)
+        assert result.cv_end_date == expected
+        assert calls, "stub was never called"
+        assert all(c["cv_end_date"] == expected for c in calls), (
+            "every trial must receive the concrete derived date, never None"
+        )
+
+    def test_explicit_cv_end_date_passed_through(self, monkeypatch):
+        calls = self._stub_cv(monkeypatch)
+        explicit = pd.Timestamp(self.INTV) - pd.Timedelta(days=45)
+        result = tune_model(self._df(), self.INTV, "arima",
+                            n_trials=2, n_folds=2, cv_end_date=explicit)
+        assert result.cv_end_date == explicit
+        assert all(c["cv_end_date"] == explicit for c in calls)
+
+    def test_cv_end_date_after_intervention_raises(self, monkeypatch):
+        # Upfront raise: _evaluate_trial swallows exceptions into inf rows,
+        # so an invalid explicit cap must fail before any trial launches.
+        calls = self._stub_cv(monkeypatch)
+        bad = pd.Timestamp(self.INTV) + pd.Timedelta(days=10)
+        with pytest.raises(ValueError, match="cv_end_date"):
+            tune_model(self._df(), self.INTV, "arima",
+                       n_trials=2, n_folds=2, cv_end_date=bad)
+        assert calls == []
+
+    def test_config_overrides_periods_drive_derivation(self, monkeypatch):
+        from its2s.data_prep import prepare_splits
+        calls = self._stub_cv(monkeypatch)
+        df = self._df()
+        overrides = {
+            "periods": {"split_method": "days",
+                        "test_days": 30, "holdout_days": 30},
+            "models": {"arima": {"max_p": 99}},
+        }
+        expected = prepare_splits(df, self.INTV, split_method="days",
+                                  test_days=30, holdout_days=30,
+                                  min_test_obs=0).test_df["ds"].min()
+        assert expected != prepare_splits(df, self.INTV).test_df["ds"].min()
+        result = tune_model(df, self.INTV, "arima", n_trials=2, n_folds=2,
+                            config_overrides=overrides)
+        assert result.cv_end_date == expected
+        for c in calls:
+            merged = c["config_overrides"]
+            assert merged["periods"] == overrides["periods"]
+            # Trial params always win over user model overrides.
+            assert merged["models"]["arima"]["max_p"] != 99
+            assert 1 <= merged["models"]["arima"]["max_p"] <= 5

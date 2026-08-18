@@ -74,3 +74,198 @@ def test_split_default_short_series_no_empty_splits():
     assert len(splits.train_df) > 0
     assert len(splits.test_df) > 0
     assert len(splits.holdout_df) > 0
+
+
+def _make_regular_series(n_pre, n_post, freq, start="2020-01-06", seed=0):
+    n = n_pre + n_post
+    dates = pd.date_range(start, periods=n, freq=freq)
+    rng = np.random.default_rng(seed)
+    y = 100 + rng.normal(0, 1, n)
+    df = pd.DataFrame({"ds": dates, "y": y})
+    return df, dates[n_pre]
+
+
+def test_split_percent_weekly_counts_observations():
+    """Issue #28: the percent path sizes windows in observations, not days."""
+    df, intv = _make_regular_series(n_pre=181, n_post=52, freq="W-MON")
+    splits = prepare_splits(df, intv, split_method="percent",
+                            test_pct=0.20, holdout_pct=1.0)
+    assert len(splits.test_df) == 36   # round(0.20 * 181), was 5 under #28
+    assert len(splits.train_df) == 145
+    assert len(splits.holdout_df) == 52  # all post rows, was ~8 under #28
+    assert len(splits.full_predict_df) == 36 + 52
+
+
+def test_split_method_observations():
+    df, intv = _make_regular_series(n_pre=181, n_post=52, freq="W-MON")
+    splits = prepare_splits(df, intv, split_method="observations",
+                            test_obs=36, holdout_obs=52)
+    assert len(splits.test_df) == 36
+    assert len(splits.train_df) == 145
+    assert len(splits.holdout_df) == 52
+
+
+def test_split_method_observations_requires_explicit_counts():
+    df, intv = _make_series(n_pre=100, n_post=50)
+    with pytest.raises(ValueError, match="test_obs"):
+        prepare_splits(df, intv, split_method="observations")
+
+
+def test_split_cross_method_args_raise():
+    """Issue #54: arguments for another split method are never silently ignored."""
+    df, intv = _make_series(n_pre=100, n_post=50)
+    with pytest.raises(ValueError, match="test_days"):
+        prepare_splits(df, intv, test_days=30, holdout_days=30)  # percent default
+    with pytest.raises(ValueError, match="test_pct"):
+        prepare_splits(df, intv, split_method="days", test_pct=0.20)
+    with pytest.raises(ValueError, match="test_obs"):
+        prepare_splits(df, intv, split_method="percent", test_obs=20)
+
+
+def test_validate_days_weekly_within_span_passes():
+    """Issue #49 false positive: 252 days is valid on a 180-week pre span."""
+    from its2s.validation import validate_inputs
+    df, intv = _make_regular_series(n_pre=181, n_post=52, freq="W-MON")
+    validate_inputs(df, intv, "ds", "y", None, "prophet_xgb",
+                    split_method="days", test_days=252, holdout_days=52)
+
+
+def test_validate_days_beyond_span_raises():
+    """Issue #49 false negative: 30 days exceeds ~8.3 days of hourly data."""
+    from its2s.validation import validate_inputs
+    df, intv = _make_regular_series(n_pre=200, n_post=24, freq="h")
+    with pytest.raises(ValueError, match="test_days"):
+        validate_inputs(df, intv, "ds", "y", None, "prophet_xgb",
+                        split_method="days", test_days=30, holdout_days=1)
+
+
+def test_validate_observations_empty_train_raises():
+    from its2s.validation import validate_inputs
+    df, intv = _make_series(n_pre=100, n_post=50)
+    with pytest.raises(ValueError, match="test_obs"):
+        validate_inputs(df, intv, "ds", "y", None, "prophet_xgb",
+                        split_method="observations", test_obs=100,
+                        holdout_obs=50)
+
+
+def test_split_nonpositive_windows_raise():
+    """A non-positive window must raise: test_days=-30 would silently pull
+    post-intervention rows into the training window (temporal leakage)."""
+    df, intv = _make_series(n_pre=100, n_post=50)
+    with pytest.raises(ValueError, match="test_days"):
+        prepare_splits(df, intv, split_method="days",
+                       test_days=-30, holdout_days=30)
+    with pytest.raises(ValueError, match="holdout_days"):
+        prepare_splits(df, intv, split_method="days",
+                       test_days=30, holdout_days=0)
+    with pytest.raises(ValueError, match="test_pct"):
+        prepare_splits(df, intv, split_method="percent", test_pct=-0.2)
+    with pytest.raises(ValueError, match="test_pct"):
+        prepare_splits(df, intv, split_method="percent", test_pct=1.5)
+    with pytest.raises(ValueError, match="test_obs"):
+        prepare_splits(df, intv, split_method="observations",
+                       test_obs=-10, holdout_obs=10)
+
+
+def test_min_test_obs_warns_on_empty_window():
+    """An EMPTY test window is the most degenerate case: downstream code
+    substitutes training metrics for test metrics, so it must warn."""
+    df, intv = _make_series(n_pre=100, n_post=50)
+    # Remove the 30 rows before the intervention so a 30-day test window
+    # catches nothing.
+    gap_start = intv - pd.Timedelta(days=30)
+    df_gapped = df[~((df["ds"] >= gap_start) & (df["ds"] < intv))]
+    with pytest.warns(UserWarning, match="EMPTY"):
+        prepare_splits(df_gapped, intv, split_method="days",
+                       test_days=30, holdout_days=30)
+
+
+def test_min_test_obs_warns_on_small_window():
+    """Issue #29: a degenerate test window warns whatever its cause."""
+    df, intv = _make_series(n_pre=100, n_post=50)
+    with pytest.warns(UserWarning, match="min_test_obs"):
+        prepare_splits(df, intv, split_method="percent",
+                       test_pct=0.10)  # 10 obs < default threshold 30
+
+
+def test_min_test_obs_silent_at_threshold():
+    import warnings
+    df, intv = _make_series(n_pre=150, n_post=50)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        prepare_splits(df, intv, split_method="percent",
+                       test_pct=0.20)  # exactly 30 obs, no warning
+
+
+def test_min_test_obs_zero_disables():
+    import warnings
+    df, intv = _make_series(n_pre=100, n_post=50)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        prepare_splits(df, intv, split_method="percent",
+                       test_pct=0.10, min_test_obs=0)
+
+
+# ---------------------------------------------------------------------------
+# resolve_split_config: shared periods-section resolution (GH #40)
+# ---------------------------------------------------------------------------
+
+class TestResolveSplitConfig:
+    def test_percent_defaults(self):
+        from its2s.data_prep import resolve_split_config
+        method, kwargs = resolve_split_config({})
+        assert method == "percent"
+        assert kwargs == {"test_pct": 0.20, "holdout_pct": 1.0}
+
+    def test_days_defaults(self):
+        from its2s.data_prep import resolve_split_config
+        method, kwargs = resolve_split_config({"split_method": "days"})
+        assert method == "days"
+        assert kwargs == {"test_days": 365, "holdout_days": 365}
+
+    def test_observations_none_passthrough(self):
+        # Missing obs keys pass through as None; prepare_splits raises on
+        # them, not the resolver.
+        from its2s.data_prep import resolve_split_config
+        method, kwargs = resolve_split_config(
+            {"split_method": "observations"})
+        assert method == "observations"
+        assert kwargs == {"test_obs": None, "holdout_obs": None}
+
+    def test_argument_overrides_config_key(self):
+        from its2s.data_prep import resolve_split_config
+        method, kwargs = resolve_split_config(
+            {"split_method": "percent"}, "days")
+        assert method == "days"
+        assert kwargs == {"test_days": 365, "holdout_days": 365}
+
+    def test_foreign_family_config_keys_raise(self):
+        # The raise-on-foreign-keys contract holds on the config path too:
+        # a window setting the user wrote is never silently ignored, whether
+        # the method comes from the config key or the override argument.
+        from its2s.data_prep import resolve_split_config
+        with pytest.raises(ValueError, match="test_days"):
+            resolve_split_config({"split_method": "percent",
+                                  "test_days": 180, "holdout_days": 90})
+        with pytest.raises(ValueError, match="test_pct"):
+            resolve_split_config(
+                {"split_method": "percent", "test_pct": 0.30}, "days")
+
+    def test_default_config_has_no_family_keys(self):
+        # The shipped params.yaml must not pre-set window keys for any
+        # family, or the foreign-key check would make the other families
+        # unreachable through configuration.
+        from its2s.data_prep import _METHOD_ARGS, resolve_split_config
+        from its2s.settings import load_config
+        periods = load_config()["periods"]
+        family_keys = [k for fam in _METHOD_ARGS.values() for k in fam]
+        assert not [k for k in family_keys if k in periods]
+        for method in _METHOD_ARGS:
+            resolve_split_config(periods, method)  # no raise for any method
+
+    def test_config_not_mutated(self):
+        from its2s.data_prep import resolve_split_config
+        cfg = {"split_method": "percent", "test_pct": 0.30}
+        before = dict(cfg)
+        resolve_split_config(cfg)
+        assert cfg == before

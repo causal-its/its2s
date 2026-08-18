@@ -69,8 +69,12 @@ def get_model_config(config, model_name):
 def get_tuning_config(config):
     """Extract the tuning defaults section.
 
-    Fills in sensible defaults for percent-based and day-based CV controls so
-    callers (e.g. tune_model) can read either path uniformly.
+    Fills in sensible defaults for percent-based and observation-based CV
+    controls so callers (e.g. tune_model) can read either path uniformly.
+    Legacy day-named keys raise: CV windows are observation counts (GH #39),
+    and silently reinterpreting old keys is the failure mode GH #28 showed.
+    Keys from the window family not selected by split_method also raise, so
+    a config cannot carry settings that would be silently ignored (GH #55).
 
     Parameters
     ----------
@@ -81,17 +85,41 @@ def get_tuning_config(config):
     dict
     """
     tuning = copy.deepcopy(config.get("tuning", {}))
+    legacy = [k for k in ("test_days", "min_train_days", "skip_days")
+              if k in tuning]
+    if legacy:
+        raise ValueError(
+            f"Legacy tuning keys {legacy} are no longer supported. CV windows "
+            "are observation counts: use test_obs/min_train_obs/skip_obs with "
+            "split_method 'observations'."
+        )
     tuning.setdefault("split_method", "percent")
     tuning.setdefault("n_folds", 5)
     tuning.setdefault("metric", "rmse")
     tuning.setdefault("n_jobs", 1)
     tuning.setdefault("seed", 42)
-    if tuning["split_method"] == "percent":
+    families = {"percent":      ("test_pct", "min_train_pct", "skip_pct"),
+                "observations": ("test_obs", "min_train_obs", "skip_obs")}
+    method = tuning["split_method"]
+    if method not in families:
+        raise ValueError(
+            f"tuning.split_method must be 'percent' or 'observations', "
+            f"got {method!r}."
+        )
+    foreign = [k for fam in families.values() for k in fam
+               if k in tuning and k not in families[method]]
+    if foreign:
+        raise ValueError(
+            f"Tuning keys {foreign} do not apply to split_method="
+            f"{method!r}, which uses {list(families[method])}. Set the "
+            "keys for the chosen split_method only."
+        )
+    if method == "percent":
         tuning.setdefault("test_pct", 0.10)
         tuning.setdefault("min_train_pct", 0.50)
         tuning.setdefault("skip_pct", 0.0)
     else:
-        tuning.setdefault("test_days", 365)
-        tuning.setdefault("min_train_days", 730)
-        tuning.setdefault("skip_days", 0)
+        tuning.setdefault("test_obs", 365)
+        tuning.setdefault("min_train_obs", 730)
+        tuning.setdefault("skip_obs", 0)
     return tuning

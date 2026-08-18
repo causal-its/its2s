@@ -18,11 +18,21 @@ data:
   missing_data: "error"   # "error", "drop", or "interpolate"
 
 periods:
-  split_method: percent       # "percent" (default) | "days"
-  test_pct: 0.20              # used when split_method=percent
-  holdout_pct: 1.0             # used when split_method=percent
-  test_days: 365              # used when split_method=days
-  holdout_days: 365           # used when split_method=days
+  split_method: percent       # "percent" (default) | "days" | "observations"
+  # Window sizes default in code per family (prepare_splits): percent
+  # test_pct 0.20 / holdout_pct 1.0, days test_days 365 / holdout_days 365,
+  # observations required with no defaults. They are NOT set here: only the
+  # family matching split_method may appear in config, and keys from another
+  # family raise instead of being silently ignored (GH #28, #54), so defaults
+  # for every family in this file would make the non-default methods
+  # unreachable. Set keys for the chosen family only, e.g.:
+  # test_pct: 0.20            # percent: fraction of pre-intervention observations
+  # holdout_pct: 1.0          # percent: fraction of post-intervention observations
+  # test_days: 365            # days: calendar days, whatever the series frequency
+  # holdout_days: 365         # days: calendar days, whatever the series frequency
+  # test_obs: 52              # observations: row counts; required, no defaults
+  # holdout_obs: 52
+  min_test_obs: 30            # warn when the realized test window has fewer observations (0 disables); GH #29
 
 models:
   prophet_xgb:
@@ -62,7 +72,6 @@ models:
     learning_rate: 0.01
     epochs: 100
     batch_size: 64
-    freq: "D"   # pandas offset alias; override for non-daily series (e.g. "W", "MS")
 
   arima:
     max_p: 5
@@ -106,26 +115,41 @@ parallel:
   n_jobs: 1
 
 excess_periods: []
-# Example excess_periods:
+# Example excess_periods. Offsets are unit-explicit: delimit each period with
+# EITHER start_offset_days/end_offset_days (calendar days from the holdout
+# start, inclusive end) OR start_offset_obs/end_offset_obs (observation
+# counts into the holdout, inclusive end). Mixing the two families in one
+# period raises; the legacy start_offset/end_offset keys are rejected.
 # - name: "First 30 days"
-#   start_offset: 0
-#   end_offset: 30
+#   start_offset_days: 0
+#   end_offset_days: 30
+# - name: "First 4 observations"
+#   start_offset_obs: 0
+#   end_offset_obs: 3
 # - name: "Full holdout"
-#   start_offset: 0
-#   end_offset: null
+#   start_offset_obs: 0
+#   end_offset_obs: null
 
 tuning:
   split_method: percent
   n_folds: 5
-  test_pct: 0.10              # CV fold test window = 10% of pre-intervention
-  min_train_pct: 0.50         # initial training = 50% of pre-intervention
-  skip_pct: 0.0               # gap between folds (0% = back-to-back)
-  test_days: 365              # used when split_method=days
-  min_train_days: 730
-  skip_days: 0
+  # Window sizes default in code per family (get_tuning_config): percent
+  # test_pct 0.10 / min_train_pct 0.50 / skip_pct 0.0, observations
+  # test_obs 365 / min_train_obs 730 / skip_obs 0. They are NOT set here:
+  # only the window family matching split_method may appear in config, and
+  # keys from the other family raise instead of being silently ignored
+  # (GH #55), so defaults for both families in this file would make one
+  # family unreachable. Set keys for the chosen family only, e.g.:
+  # test_pct: 0.10            # CV fold test window = 10% of pre-intervention
+  # test_obs: 365             # CV windows are observation counts, never
+  # min_train_obs: 730        # calendar days (GH #39); these equal calendar
+  # skip_obs: 0               # days only on daily data
   metric: "rmse"
   n_jobs: 1
   seed: 42
+  # cv_end_date is not a config key: it is derived at runtime from the
+  # 'periods' split so tuning folds stay out of the held-out test window
+  # (GH #40); pass cv_end_date to tune_model to override.
   # Default trial counts per model (matches R reference grid sizes)
   model_defaults:
     prophet_xgb: 100

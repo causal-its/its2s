@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 def validate_inputs(df, intervention_date, date_col, target_col,
                     covariate_cols, model_name,
                     split_method=None, test_pct=None, holdout_pct=None,
-                    test_days=None, holdout_days=None):
+                    test_days=None, holdout_days=None,
+                    test_obs=None, holdout_obs=None):
     """Validate inputs before running the ITS pipeline.
 
     Raises ValueError with a clear message if any check fails.
@@ -113,11 +114,32 @@ def validate_inputs(df, intervention_date, date_col, target_col,
                 f"periods.holdout_pct must be in (0, 1], got {holdout_pct}."
             )
     elif split_method == "days":
-        if test_days is not None and test_days >= n_before:
+        # test_days is calendar time, so compare it against the calendar span
+        # of the pre-intervention data, not against a row count (issue #49).
+        pre_span = intervention_ts - dates.min()
+        if test_days is not None and pd.Timedelta(days=test_days) >= pre_span:
             raise ValueError(
-                f"periods.test_days ({test_days}) >= number of pre-intervention "
+                f"periods.test_days ({test_days} days) >= the pre-intervention "
+                f"span of the data ({max(pre_span.days, 0)} days). The training "
+                "split would be empty. Reduce test_days or switch to "
+                "split_method='percent'."
+            )
+    elif split_method == "observations":
+        if test_obs is None or holdout_obs is None:
+            raise ValueError(
+                "split_method='observations' requires periods.test_obs and "
+                "periods.holdout_obs to be set."
+            )
+        if test_obs < 1 or holdout_obs < 1:
+            raise ValueError(
+                f"periods.test_obs and periods.holdout_obs must be >= 1, got "
+                f"test_obs={test_obs}, holdout_obs={holdout_obs}."
+            )
+        if test_obs >= n_before:
+            raise ValueError(
+                f"periods.test_obs ({test_obs}) >= number of pre-intervention "
                 f"observations ({n_before}). The training split would be empty. "
-                "Reduce test_days or switch to split_method='percent'."
+                "Reduce test_obs or switch to split_method='percent'."
             )
 
     # Check for excessive missing data

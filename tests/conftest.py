@@ -250,12 +250,13 @@ def make_intervention_at_boundary(position="start", seed=42):
 # ---------------------------------------------------------------------------
 
 def make_mock_bootstrap_result(n_dates=60, n_sim=10, intervention_idx=30,
-                               base_predicted=100.0, actual_shift=10.0, seed=42):
+                               base_predicted=100.0, actual_shift=10.0, seed=42,
+                               freq="D"):
     """Create a synthetic BootstrapCIResult without running MBB."""
     from its2s.bootstrap.base import BootstrapCIResult
 
     rng = np.random.default_rng(seed)
-    dates = pd.date_range("2021-01-01", periods=n_dates, freq="D")
+    dates = pd.date_range("2021-01-01", periods=n_dates, freq=freq)
     predicted = np.full(n_dates, base_predicted) + rng.normal(0, 2, n_dates)
     actual = predicted.copy()
     actual[intervention_idx:] += actual_shift

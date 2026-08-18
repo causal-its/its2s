@@ -116,8 +116,12 @@ Yes, but configuration adjustments are required:
 
 - Set `m` for ARIMA: `config_overrides={"models": {"arima": {"m": 52}}}` for weekly,
   `{"m": 12}` for monthly.
-- Set `freq` for NeuralProphet: `config_overrides={"models": {"neuralprophet": {"freq": "W"}}}`.
-- Consider adjusting `block_length` for the MBB (default 14 is calibrated for daily data).
+- Series frequency itself is resolved automatically from the date column; the series
+  must be a complete, regularly spaced grid (no gaps or duplicate dates), or the
+  pipeline raises an error naming the first offending timestamp.
+- Consider adjusting `block_length` for the MBB (default 14 is calibrated for daily
+  data; block length is measured in observations, so 14 means 14 weeks on a weekly
+  series).
 
 ---
 
@@ -125,9 +129,10 @@ Yes, but configuration adjustments are required:
 
 There is no hard minimum, but the series must be long enough to:
 
-1. Support the cross-validation framework (`min_train_days` + at least one fold of
-   `test_days` + `skip_days`).
-2. Provide a reliable test window (`test_days`, default 365 days) for model selection.
+1. Support the cross-validation framework (`min_train_obs` + at least one fold of
+   `test_obs` + `skip_obs` -- all observation counts, not calendar days).
+2. Provide a reliable test window (default 20% of pre-intervention observations) for
+   model selection.
 
 Series shorter than about two years of daily observations will typically produce
 unstable tuning and cross-validation results. Shorter series are better served by
@@ -185,9 +190,14 @@ run_single_its(
 )
 ```
 
-In `"days"` mode, `test_days` must be strictly less than the number of pre-intervention
-observations or the pipeline raises `ValueError` (a previously silent failure mode where
-the training split came back empty).
+In `"days"` mode, windows are calendar time whatever the series frequency: on weekly
+data `test_days=365` spans about 52 observations. `test_days` must be strictly less
+than the calendar span of the pre-intervention data or the pipeline raises
+`ValueError` (a previously silent failure mode where the training split came back
+empty). To pin windows to exact observation counts instead, use
+`split_method="observations"` with `test_obs` / `holdout_obs` (both required, no
+defaults). Arguments belonging to a different `split_method` raise an error rather
+than being silently ignored.
 
 ---
 
@@ -200,7 +210,7 @@ merged on top of the package defaults at the highest priority:
 
 ```python
 config_overrides = {
-    "periods": {"test_days": 180, "holdout_days": 90},
+    "periods": {"split_method": "days", "test_days": 180, "holdout_days": 90},
     "bootstrap": {"n_sim": 500, "block_length": 14},
     "models": {"arima": {"m": 52}},
 }

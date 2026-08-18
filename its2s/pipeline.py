@@ -12,10 +12,12 @@ import pandas as pd
 from .bootstrap.mbb import MovingBlockBootstrap
 from .diagnostics import compute_diagnostics, DiagnosticsResult
 from .settings import get_model_config, load_config
-from .data_prep import prepare_splits
+from .data_prep import prepare_splits, resolve_split_config
+from .frequency import resolve_frequency
 from .validation import validate_inputs
 from .metrics.error_metrics import compute_metrics, MetricsResult
-from .metrics.excess import ExcessResult, calc_ate_summary, calculate_excess
+from .metrics.excess import (ExcessResult, calc_ate_summary, calculate_excess,
+                             validate_excess_periods)
 from .outputs.plots import plot_counterfactual
 from .outputs.tables import save_ate_summary, save_excess_table, save_metrics_table
 
@@ -96,13 +98,17 @@ class PipelineResult:
     metrics_test : MetricsResult
         RMSE, MAE, MAPE, and R2 computed on the test period.
     excess_table : ExcessResult
-        Day-level excess estimates with CIs for the holdout period. Pass to
-        calc_ate_summary() to get total and mean-daily ATE with CIs.
+        Per-observation excess estimates with CIs for the holdout period.
+        Pass to calc_ate_summary() to get total and per-observation ATE
+        with CIs.
     config : dict
         Full resolved config dict used for this run.
     diagnostics : DiagnosticsResult or None
         Residual diagnostics (Ljung-Box, Shapiro-Wilk, ACF lags). None if
         diagnostics could not be computed.
+    series_frequency : SeriesFrequency or None
+        Frequency resolved from the data (its2s.frequency), the single
+        source for all window-unit interpretation.
     """
 
     model_name: str
@@ -113,6 +119,7 @@ class PipelineResult:
     excess_table: ExcessResult
     config: dict
     diagnostics: DiagnosticsResult | None = None
+    series_frequency: object | None = None
 
     def summary(self):
         """Return a human-readable summary string."""
@@ -129,16 +136,16 @@ class PipelineResult:
         mt = self.metrics_test
         lines.append(f"  RMSE={mt.rmse:.4f}  MAE={mt.mae:.4f}  "
                       f"MAPE={mt.mape:.2f}%  R2={mt.r2:.4f}")
-        if not self.excess_table.daily_excess.empty:
+        if not self.excess_table.obs_excess.empty:
             ate = calc_ate_summary(self.excess_table)
             total = ate[ate["metric"] == "Total ATE"].iloc[0]
-            daily = ate[ate["metric"] == "Mean Daily ATE"].iloc[0]
+            per_obs = ate[ate["metric"] == "Mean ATE per obs"].iloc[0]
             lines.append("")
             lines.append(f"Total ATE: {total['estimate']:.2f} "
                           f"[{total['ci_lo']:.2f}, {total['ci_hi']:.2f}]")
-            lines.append(f"Mean Daily ATE: {daily['estimate']:.4f} "
-                          f"[{daily['ci_lo']:.4f}, {daily['ci_hi']:.4f}]")
-            lines.append(f"Holdout days: {int(total['n_days'])}")
+            lines.append(f"Mean ATE per obs: {per_obs['estimate']:.4f} "
+                          f"[{per_obs['ci_lo']:.4f}, {per_obs['ci_hi']:.4f}]")
+            lines.append(f"Holdout obs: {int(total['n_obs'])}")
         if self.diagnostics:
             d = self.diagnostics
             lines.append("")
@@ -205,24 +212,21 @@ def run_single_its(
     config["data"]["date_col"] = date_col
     config["data"]["target_col"] = target_col
 
-    # Resolve split-method config (function kwarg overrides config)
+    # Resolve split-method config (function kwarg overrides config). Only the
+    # arguments belonging to the resolved method are read and passed on:
+    # prepare_splits raises on cross-method arguments (#28, #54).
     periods_cfg = config["periods"]
-    if split_method is not None:
-        periods_cfg["split_method"] = split_method
-    split_method_resolved = periods_cfg.get("split_method", "percent")
-    test_pct_resolved = periods_cfg.get("test_pct", 0.20)
-    holdout_pct_resolved = periods_cfg.get("holdout_pct", 1.0)
-    test_days_resolved = periods_cfg.get("test_days", 365)
-    holdout_days_resolved = periods_cfg.get("holdout_days", 365)
+    split_method_resolved, split_kwargs = resolve_split_config(
+        periods_cfg, split_method)
 
-    # 1b. Validate inputs
+    # 1b. Validate inputs. excess_periods is checked here too, so a stale or
+    # malformed section fails in seconds rather than after the model fit and
+    # the full bootstrap, which is where calculate_excess would first read it.
     validate_inputs(df, intervention_date, date_col, target_col,
                     covariate_cols, model_name,
                     split_method=split_method_resolved,
-                    test_pct=test_pct_resolved,
-                    holdout_pct=holdout_pct_resolved,
-                    test_days=test_days_resolved,
-                    holdout_days=holdout_days_resolved)
+                    **split_kwargs)
+    validate_excess_periods(config.get("excess_periods"))
 
     # M2-6: Check date-sort and warn if DataFrame is unsorted
     dates_check = pd.to_datetime(df[date_col])
@@ -243,12 +247,19 @@ def run_single_its(
         if missing_strategy == "error":
             raise ValueError(
                 f"Target column '{target_col}' contains {n_missing} missing "
-                f"values. Set data.missing_data to 'drop' or 'interpolate' "
-                f"in config to handle them automatically."
+                "values. Set data.missing_data to 'interpolate' to fill them "
+                "on the regular grid, or repair the series upstream. Note "
+                "that 'drop' removes the rows entirely, which leaves a "
+                "gapped grid that fails frequency resolution -- use it only "
+                "when the removed rows sit at the series edges."
             )
         elif missing_strategy == "drop":
             warnings.warn(
-                f"Dropping {n_missing} row(s) with missing values in '{target_col}'.",
+                f"Dropping {n_missing} row(s) with missing values in "
+                f"'{target_col}'. If any dropped row is interior to the "
+                "series, the remaining dates no longer form a regular grid "
+                "and frequency resolution will fail; use 'interpolate' to "
+                "keep the grid complete.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -269,34 +280,43 @@ def run_single_its(
                 f"Expected 'error', 'drop', or 'interpolate'."
             )
 
-    # 2. Prepare splits
+    # 1d. Resolve series frequency once, from the data, after missing-data
+    # handling so that rows dropped above surface here as gaps (#48, #52).
+    series_freq = resolve_frequency(pd.to_datetime(df[date_col]).sort_values())
+    logger.info("Resolved series frequency: %s", series_freq.alias)
+
+    # 2. Prepare splits (prepare_splits logs the resulting window sizes)
     splits = prepare_splits(
         df,
         intervention_date,
         date_col=date_col,
         split_method=split_method_resolved,
-        test_pct=test_pct_resolved,
-        holdout_pct=holdout_pct_resolved,
-        test_days=test_days_resolved,
-        holdout_days=holdout_days_resolved,
-    )
-
-    logger.info(
-        "Splits: train=%d, test=%d, holdout=%d",
-        len(splits.train_df), len(splits.test_df), len(splits.holdout_df),
+        min_test_obs=periods_cfg.get("min_test_obs", 30),
+        **split_kwargs,
     )
 
     # 3. Instantiate model
     model_params = get_model_config(config, model_name)
+    if model_name == "neuralprophet":
+        # freq comes from the resolved series frequency, never from user
+        # config: a declared value cannot disagree with the data (#52).
+        model_params = dict(model_params)
+        model_params["freq"] = series_freq.alias
     model = _get_model(model_name, model_params)
 
-    # 3b. Warn about long-horizon ARIMA forecasts (B5)
-    holdout_days = len(splits.holdout_df)
-    if model_name == "arima" and holdout_days > 90:
+    # 3b. Warn about long-horizon ARIMA forecasts (B5). The horizon is a
+    # CALENDAR span, measured from the holdout dates themselves: counting
+    # rows would misread a 104-week holdout as 104 days on weekly data.
+    holdout_span_days = 0
+    if not splits.holdout_df.empty:
+        h_dates = pd.to_datetime(splits.holdout_df[date_col])
+        holdout_span_days = (h_dates.max() - h_dates.min()).days
+    if model_name == "arima" and holdout_span_days > 90:
         warnings.warn(
-            f"ARIMA with holdout_days={holdout_days}: ARIMA point forecasts "
-            "converge to the unconditional mean over long horizons, which can "
-            "bias the counterfactual estimate. Consider prophet_xgb or "
+            f"ARIMA with a holdout window spanning {holdout_span_days} "
+            "calendar days: ARIMA point forecasts converge to the "
+            "unconditional mean over long horizons, which can bias the "
+            "counterfactual estimate. Consider prophet_xgb or "
             "prophet_then_xgb for holdout windows beyond 90 days.",
             UserWarning,
             stacklevel=2,
@@ -374,6 +394,7 @@ def run_single_its(
             excess_table=excess_table,
             config=config,
             diagnostics=diag,
+            series_frequency=series_freq,
         )
 
         plot_counterfactual(
@@ -386,7 +407,7 @@ def run_single_its(
             {"train": metrics_train, "test": metrics_test},
             out / f"{model_name}_metrics.csv",
         )
-        if not excess_table.daily_excess.empty:
+        if not excess_table.obs_excess.empty:
             ate = calc_ate_summary(excess_table)
             save_ate_summary(ate, out / f"{model_name}_ate_summary.csv")
 
@@ -401,4 +422,5 @@ def run_single_its(
         excess_table=excess_table,
         config=config,
         diagnostics=diag,
+        series_frequency=series_freq,
     )

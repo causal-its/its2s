@@ -44,7 +44,7 @@ from its2s import run_single_its, run_batch
 | Function | Overview | Inputs | Outputs |
 |----------|----------|--------|---------|
 | `compare_models` | Fit several models on the same series and compare metrics side-by-side. | `df`, `intervention_date`, `model_names`, optional config / overrides, `output_dir` | comparison DataFrame + per-model `PipelineResult` |
-| `tune_model` | Latin hypercube hyperparameter search via expanding-window CV. Run **before** `run_single_its` to pick hyperparameters, then pass `best_params` via `config_overrides`. | `df`, `intervention_date`, `model_name`, `n_trials`, `n_folds`, optional `metric` / `cv_end_date` | `TuningResult` (best params + per-trial scores) |
+| `tune_model` | Latin hypercube hyperparameter search via expanding-window CV. Run **before** `run_single_its` to pick hyperparameters, then pass `best_params` via `config_overrides`. CV folds are capped before the run's held-out test window by default; `cv_end_date` overrides. | `df`, `intervention_date`, `model_name`, `n_trials`, `n_folds`, optional `metric` / `cv_end_date` / `config_overrides` | `TuningResult` (best params + per-trial scores) |
 
 ```python
 from its2s import compare_models, tune_model

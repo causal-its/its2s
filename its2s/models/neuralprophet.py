@@ -10,6 +10,7 @@ import pandas as pd
 from neuralprophet import NeuralProphet, set_log_level
 
 from .base import BaseModel, FitResult, PredictionResult
+from ..frequency import resolve_frequency
 
 
 class NeuralProphetModel(BaseModel):
@@ -57,7 +58,12 @@ class NeuralProphetModel(BaseModel):
             for col in covariate_cols:
                 self._model = self._model.add_lagged_regressor(col)
 
-        freq = self.params.get("freq", "D")
+        # freq is injected by the pipeline from the resolved series frequency
+        # (#48, #52); standalone use resolves it from the training dates. It
+        # is never read from user configuration.
+        freq = self.params.get("freq")
+        if freq is None:
+            freq = resolve_frequency(np_df["ds"]).alias
         metrics_df = self._model.fit(np_df, freq=freq)
 
         fitted_df = self._model.predict(np_df)

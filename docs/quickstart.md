@@ -93,7 +93,7 @@ Pass `output_dir` as a string or `pathlib.Path`; the directory is created if nee
 | `{model_name}_counterfactual.png` | Counterfactual plot |
 | `{model_name}_excess.csv` | Excess (observed vs counterfactual) table |
 | `{model_name}_metrics.csv` | Train/test error metrics |
-| `{model_name}_ate_summary.csv` | ATE-style summary (when daily excess is non-empty) |
+| `{model_name}_ate_summary.csv` | ATE-style summary (when the excess table is non-empty) |
 
 All paths sit under the single `output_dir` you provide.
 
@@ -133,7 +133,7 @@ Covariates are **extra numeric (or otherwise model-supported) columns** in the s
 **Requirements**
 
 - Every name in `covariate_cols` must exist as a column in `df`.
-- Values should be defined for all rows in the **test + holdout** window (whose lengths are derived from `periods.test_pct` / `periods.holdout_pct` by default, or from `periods.test_days` / `periods.holdout_days` when `split_method="days"`), so prediction and bootstrap over that horizon have the covariate path. Missing handling is model-specific; avoid unexpected NaNs in those windows unless your chosen model tolerates them.
+- Values should be defined for all rows in the **test + holdout** window (whose lengths are derived from `periods.test_pct` / `periods.holdout_pct` by default, from `periods.test_days` / `periods.holdout_days` when `split_method="days"`, or from `periods.test_obs` / `periods.holdout_obs` when `split_method="observations"`), so prediction and bootstrap over that horizon have the covariate path. Missing handling is model-specific; avoid unexpected NaNs in those windows unless your chosen model tolerates them.
 
 To change any pipeline setting — window lengths, number of bootstrap draws, or model hyperparameters — use `config_path` (a YAML file) or `config_overrides` (a Python dict). Both are layered on top of the package defaults, which live in `its2s/params.yaml`. See [Configuration and models](#configuration-and-models) below.
 
