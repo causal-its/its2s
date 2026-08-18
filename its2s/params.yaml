@@ -19,11 +19,18 @@ data:
 
 periods:
   split_method: percent       # "percent" (default) | "days" | "observations"
-  test_pct: 0.20              # used when split_method=percent (fraction of pre-intervention observations)
-  holdout_pct: 1.0             # used when split_method=percent (fraction of post-intervention observations)
-  test_days: 365              # used when split_method=days (calendar days, whatever the series frequency)
-  holdout_days: 365           # used when split_method=days (calendar days, whatever the series frequency)
-  # test_obs: 52              # used when split_method=observations (row counts; required, no defaults)
+  # Window sizes default in code per family (prepare_splits): percent
+  # test_pct 0.20 / holdout_pct 1.0, days test_days 365 / holdout_days 365,
+  # observations required with no defaults. They are NOT set here: only the
+  # family matching split_method may appear in config, and keys from another
+  # family raise instead of being silently ignored (GH #28, #54), so defaults
+  # for every family in this file would make the non-default methods
+  # unreachable. Set keys for the chosen family only, e.g.:
+  # test_pct: 0.20            # percent: fraction of pre-intervention observations
+  # holdout_pct: 1.0          # percent: fraction of post-intervention observations
+  # test_days: 365            # days: calendar days, whatever the series frequency
+  # holdout_days: 365         # days: calendar days, whatever the series frequency
+  # test_obs: 52              # observations: row counts; required, no defaults
   # holdout_obs: 52
   min_test_obs: 30            # warn when the realized test window has fewer observations (0 disables); GH #29
 
@@ -126,12 +133,14 @@ excess_periods: []
 tuning:
   split_method: percent
   n_folds: 5
-  test_pct: 0.10              # CV fold test window = 10% of pre-intervention
-  min_train_pct: 0.50         # initial training = 50% of pre-intervention
-  skip_pct: 0.0               # gap between folds (0% = back-to-back)
-  # Only the window family matching split_method may be set; keys from the
-  # other family raise instead of being silently ignored (GH #55). With
-  # split_method: observations, replace the three pct keys above with e.g.:
+  # Window sizes default in code per family (get_tuning_config): percent
+  # test_pct 0.10 / min_train_pct 0.50 / skip_pct 0.0, observations
+  # test_obs 365 / min_train_obs 730 / skip_obs 0. They are NOT set here:
+  # only the window family matching split_method may appear in config, and
+  # keys from the other family raise instead of being silently ignored
+  # (GH #55), so defaults for both families in this file would make one
+  # family unreachable. Set keys for the chosen family only, e.g.:
+  # test_pct: 0.10            # CV fold test window = 10% of pre-intervention
   # test_obs: 365             # CV windows are observation counts, never
   # min_train_obs: 730        # calendar days (GH #39); these equal calendar
   # skip_obs: 0               # days only on daily data

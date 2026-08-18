@@ -34,9 +34,10 @@ def resolve_split_config(periods_cfg, split_method=None):
     """Resolve (split_method, split_kwargs) from a config "periods" section.
 
     Only the arguments belonging to the resolved method are read and passed
-    on: prepare_splits raises on cross-method arguments (GH #28, #54). The
-    ``split_method`` argument overrides the config key. ``periods_cfg`` is
-    never mutated.
+    on, and config keys from a different method family raise here, mirroring
+    prepare_splits' guard on its own keywords: a window setting the user
+    wrote must never be silently ignored (GH #28, #54). The ``split_method``
+    argument overrides the config key. ``periods_cfg`` is never mutated.
 
     Parameters
     ----------
@@ -53,6 +54,16 @@ def resolve_split_config(periods_cfg, split_method=None):
     """
     method = (split_method if split_method is not None
               else periods_cfg.get("split_method", "percent"))
+    if method in _METHOD_ARGS:
+        foreign = [k for fam, keys in _METHOD_ARGS.items() if fam != method
+                   for k in keys if k in periods_cfg]
+        if foreign:
+            raise ValueError(
+                f"periods config keys {foreign} do not apply to "
+                f"split_method={method!r}, which uses "
+                f"{list(_METHOD_ARGS[method])}. Set the keys for the chosen "
+                "split_method only; they are never silently ignored."
+            )
     if method == "days":
         split_kwargs = {
             "test_days": periods_cfg.get("test_days", 365),
@@ -163,6 +174,13 @@ def prepare_splits(df, intervention_date, date_col="ds",
     if split_method == "days":
         test_days = 365 if test_days is None else test_days
         holdout_days = 365 if holdout_days is None else holdout_days
+        # A non-positive window would place test_start at or beyond the
+        # intervention, silently pulling post-event rows into training.
+        if test_days < 1 or holdout_days < 1:
+            raise ValueError(
+                f"test_days and holdout_days must be >= 1, got "
+                f"test_days={test_days}, holdout_days={holdout_days}."
+            )
         test_start = intervention_date - pd.Timedelta(days=test_days)
         holdout_end = intervention_date + pd.Timedelta(days=holdout_days)
         train_df = df[df[date_col] < test_start].copy()
@@ -174,6 +192,11 @@ def prepare_splits(df, intervention_date, date_col="ds",
         if split_method == "percent":
             test_pct = 0.20 if test_pct is None else test_pct
             holdout_pct = 1.0 if holdout_pct is None else holdout_pct
+            if not (0 < test_pct <= 1) or not (0 < holdout_pct <= 1):
+                raise ValueError(
+                    f"test_pct and holdout_pct must be in (0, 1], got "
+                    f"test_pct={test_pct}, holdout_pct={holdout_pct}."
+                )
             n_test = max(1, int(round(test_pct * n_pre)))
             n_holdout = max(1, int(round(holdout_pct * n_post)))
         else:
@@ -207,8 +230,21 @@ def prepare_splits(df, intervention_date, date_col="ds",
     )
 
     # Guardrail against silently degenerate test windows, whatever their
-    # cause -- unit confusion, short pre-event series, etc. (GH #29).
-    if 0 < len(test_df) < min_test_obs:
+    # cause -- unit confusion, short pre-event series, etc. (GH #29). An
+    # EMPTY window is the most degenerate case of all: downstream code
+    # substitutes training metrics for the missing test metrics, so silence
+    # here would present train performance as test performance.
+    if min_test_obs > 0 and len(test_df) == 0:
+        warnings.warn(
+            "Test window is EMPTY: no observations fall in the test period. "
+            "Downstream test metrics will silently repeat training metrics. "
+            "Check the split settings (window size vs the span of "
+            "pre-intervention data), or set min_test_obs=0 to silence this "
+            "warning.",
+            UserWarning,
+            stacklevel=2,
+        )
+    elif 0 < len(test_df) < min_test_obs:
         warnings.warn(
             f"Test window has only {len(test_df)} observations "
             f"(< min_test_obs={min_test_obs}). Test metrics such as MAPE are "

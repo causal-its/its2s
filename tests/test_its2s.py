@@ -43,8 +43,14 @@ class TestSettings:
         assert expected_keys.issubset(set(default_config.keys()))
 
     def test_default_config_values(self, default_config):
-        assert default_config["periods"]["test_days"] == 365
-        assert default_config["periods"]["holdout_days"] == 365
+        # periods ships NO window-family keys: defaults live in code
+        # (prepare_splits), because pre-set keys for every family would
+        # false-positive the cross-method check (GH #28, #54) and make the
+        # non-default methods unreachable through configuration.
+        for key in ("test_pct", "holdout_pct", "test_days", "holdout_days",
+                    "test_obs", "holdout_obs"):
+            assert key not in default_config["periods"]
+        assert default_config["periods"]["split_method"] == "percent"
         assert default_config["bootstrap"]["n_sim"] == 1000
         assert default_config["bootstrap"]["block_length"] == 14
         assert default_config["bootstrap"]["ci_level"] == 0.95
@@ -504,6 +510,38 @@ class TestExcess:
         with pytest.raises(ValueError, match="no offsets"):
             calculate_excess(br, intervention_date, periods_config=periods)
 
+    def test_validate_excess_periods_standalone(self):
+        # The same key checks calculate_excess applies, available without
+        # data so the pipeline can reject a bad excess_periods section at
+        # input validation instead of after the fit and the bootstrap.
+        from its2s.metrics.excess import validate_excess_periods
+        validate_excess_periods(None)  # absent section: fine
+        validate_excess_periods([])    # empty section: fine
+        validate_excess_periods([{"name": "ok",
+                                  "start_offset_obs": 0,
+                                  "end_offset_obs": 3}])
+        with pytest.raises(ValueError, match="no longer accepted"):
+            validate_excess_periods([{"name": "Legacy",
+                                      "start_offset": 0, "end_offset": 7}])
+        with pytest.raises(ValueError, match="mixes"):
+            validate_excess_periods([{"name": "Mixed",
+                                      "start_offset_days": 0,
+                                      "end_offset_obs": 7}])
+        with pytest.raises(ValueError, match="no offsets"):
+            validate_excess_periods([{"name": "No offsets"}])
+
+    def test_pipeline_rejects_bad_excess_periods_before_fitting(self):
+        # A stale excess_periods config must fail at input validation, in
+        # seconds -- not after the model fit and the full bootstrap.
+        from its2s.pipeline import run_single_its
+        df, intv, _ = make_daily_series(n_pre=120, n_post=30, seed=0)
+        with pytest.raises(ValueError, match="no longer accepted"):
+            run_single_its(
+                df, intv, model_name="arima",
+                config_overrides={"excess_periods": [
+                    {"name": "Legacy", "start_offset": 0, "end_offset": 30}]},
+            )
+
     def test_excess_no_holdout(self):
         from its2s.metrics.excess import calculate_excess
         br = make_mock_bootstrap_result()
@@ -831,12 +869,14 @@ class TestBatch:
             {"series_id": "s1", "df": df1, "intervention_date": intv1,
              "model_name": "arima",
              "config_overrides": {"bootstrap": {"n_sim": 5, "n_jobs": 1},
-                                  "periods": {"test_days": 30, "holdout_days": 30},
+                                  "periods": {"split_method": "days",
+                                              "test_days": 30, "holdout_days": 30},
                                   "models": {"arima": {"seasonal": False, "m": 1}}}},
             {"series_id": "s2", "df": df2, "intervention_date": intv2,
              "model_name": "arima",
              "config_overrides": {"bootstrap": {"n_sim": 5, "n_jobs": 1},
-                                  "periods": {"test_days": 30, "holdout_days": 30},
+                                  "periods": {"split_method": "days",
+                                              "test_days": 30, "holdout_days": 30},
                                   "models": {"arima": {"seasonal": False, "m": 1}}}},
         ]
         results = run_batch(series_list, output_dir=str(tmp_path), n_jobs=1, seed=42)
@@ -1194,7 +1234,8 @@ class TestCompare:
 
     _COMPARE_CFG = {
         "bootstrap": {"n_sim": 5, "n_jobs": 1},
-        "periods": {"test_days": 30, "holdout_days": 30},
+        "periods": {"split_method": "days",
+                    "test_days": 30, "holdout_days": 30},
         "models": {"arima": {"seasonal": False, "m": 1, "stepwise": True,
                               "suppress_warnings": True}},
     }

@@ -20,14 +20,13 @@ class ExcessResult:
     period_excess: pd.DataFrame
 
 
-def _period_bounds(pconf, h_dates, holdout_start, holdout_end):
-    """Resolve one sub-period config to (mask, start, end) over the holdout rows.
+def _validate_period_keys(pconf):
+    """Check one sub-period config's offset keys; return (name, has_days).
 
-    Offsets are unit-explicit: exactly one of the two key families per period.
-    start_offset_days/end_offset_days delimit in calendar time from the holdout
-    start (inclusive end date); start_offset_obs/end_offset_obs delimit by row
-    position (inclusive end index). The two agree only on daily series, which
-    is why the unit must be named.
+    Raises on the legacy ambiguous-unit keys, on mixing the _days and _obs
+    families in one period, and on a period with no offsets at all. Shared by
+    _period_bounds (at computation time) and validate_excess_periods (at
+    input-validation time, so a bad config fails before any expensive work).
     """
     name = pconf.get("name", "<unnamed>")
     keys = set(pconf)
@@ -51,6 +50,30 @@ def _period_bounds(pconf, h_dates, holdout_start, holdout_end):
             "start_offset_days/end_offset_days or "
             "start_offset_obs/end_offset_obs."
         )
+    return name, has_days
+
+
+def validate_excess_periods(periods_config):
+    """Validate excess-period configs without computing anything.
+
+    Runs the same key checks _period_bounds applies, so the pipeline can
+    reject a stale or malformed excess_periods section at input validation
+    instead of after the model fit and the full bootstrap.
+    """
+    for pconf in periods_config or []:
+        _validate_period_keys(pconf)
+
+
+def _period_bounds(pconf, h_dates, holdout_start, holdout_end):
+    """Resolve one sub-period config to (mask, start, end) over the holdout rows.
+
+    Offsets are unit-explicit: exactly one of the two key families per period.
+    start_offset_days/end_offset_days delimit in calendar time from the holdout
+    start (inclusive end date); start_offset_obs/end_offset_obs delimit by row
+    position (inclusive end index). The two agree only on daily series, which
+    is why the unit must be named.
+    """
+    name, has_days = _validate_period_keys(pconf)
 
     if has_days:
         p_start = holdout_start + pd.Timedelta(days=pconf.get("start_offset_days", 0))

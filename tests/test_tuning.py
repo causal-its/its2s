@@ -325,18 +325,24 @@ class TestTuneModel:
 
 class TestTuningConfig:
     def test_tuning_section_in_default_config(self):
-        # The shipped config sets exactly one window family (percent); the
-        # obs family absent, so it cannot carry silently ignored keys (GH #55).
-        from its2s.settings import load_config
+        # The shipped config sets NO window family: family defaults live in
+        # code (get_tuning_config), because pre-set keys for either family
+        # would false-positive the cross-method check (GH #55) and make the
+        # other family unreachable through configuration.
+        from its2s.settings import get_tuning_config, load_config
         cfg = load_config()
         assert "tuning" in cfg
         assert cfg["tuning"]["n_folds"] == 5
         assert cfg["tuning"]["split_method"] == "percent"
-        assert cfg["tuning"]["test_pct"] == 0.10
-        assert cfg["tuning"]["min_train_pct"] == 0.50
-        assert "test_obs" not in cfg["tuning"]
-        assert "min_train_obs" not in cfg["tuning"]
+        for key in ("test_pct", "min_train_pct", "skip_pct",
+                    "test_obs", "min_train_obs", "skip_obs"):
+            assert key not in cfg["tuning"]
         assert cfg["tuning"]["metric"] == "rmse"
+        # The code defaults still resolve for the shipped percent method.
+        tc = get_tuning_config(cfg)
+        assert tc["test_pct"] == 0.10
+        assert tc["min_train_pct"] == 0.50
+        assert tc["skip_pct"] == 0.0
 
     def test_get_tuning_config(self):
         from its2s.settings import get_tuning_config, load_config
@@ -370,6 +376,21 @@ class TestTuningConfig:
         cfg["tuning"]["test_obs"] = 60  # split_method is percent
         with pytest.raises(ValueError, match="test_obs"):
             get_tuning_config(cfg)
+
+    def test_observations_method_reachable_via_config(self):
+        # Regression: the shipped params.yaml must not pre-set pct keys, or
+        # the cross-method check false-positives on defaults the user never
+        # wrote and split_method 'observations' becomes unreachable through
+        # configuration.
+        from its2s.settings import get_tuning_config, load_config
+        cfg = load_config(overrides={"tuning": {
+            "split_method": "observations",
+            "test_obs": 60, "min_train_obs": 400, "skip_obs": 0}})
+        tc = get_tuning_config(cfg)
+        assert tc["split_method"] == "observations"
+        assert (tc["test_obs"], tc["min_train_obs"], tc["skip_obs"]) == \
+            (60, 400, 0)
+        assert "test_pct" not in tc
 
 
 # ---------------------------------------------------------------------------

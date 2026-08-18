@@ -315,7 +315,8 @@ class TestARIMASpecific:
         result = run_single_its(df, intv, model_name="arima", seed=42,
                                 config_overrides=_merge(
                                     _FAST,
-                                    {"periods": {"test_days": 364, "holdout_days": 364},
+                                    {"periods": {"split_method": "days",
+                                                 "test_days": 364, "holdout_days": 364},
                                      "models": {"arima": {"m": 52}},
                                      "metrics": {"seasonality": 52}}))
         assert result.model_name == "arima"
@@ -326,7 +327,8 @@ class TestARIMASpecific:
         result = run_single_its(df, intv, model_name="arima", seed=42,
                                 config_overrides=_merge(
                                     _FAST,
-                                    {"periods": {"test_days": 360, "holdout_days": 360},
+                                    {"periods": {"split_method": "days",
+                                                 "test_days": 360, "holdout_days": 360},
                                      "models": {"arima": {"m": 12}},
                                      "metrics": {"seasonality": 12}}))
         assert result.model_name == "arima"
@@ -337,7 +339,8 @@ class TestARIMASpecific:
         result = run_single_its(df, intv, model_name="arima", seed=42,
                                 config_overrides=_merge(
                                     _FAST,
-                                    {"periods": {"test_days": 360, "holdout_days": 360},
+                                    {"periods": {"split_method": "days",
+                                                 "test_days": 360, "holdout_days": 360},
                                      "models": {"arima": {"m": 4, "seasonal": True}},
                                      "metrics": {"seasonality": 4}}))
         assert result.model_name == "arima"

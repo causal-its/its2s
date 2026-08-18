@@ -16,7 +16,8 @@ from .data_prep import prepare_splits, resolve_split_config
 from .frequency import resolve_frequency
 from .validation import validate_inputs
 from .metrics.error_metrics import compute_metrics, MetricsResult
-from .metrics.excess import ExcessResult, calc_ate_summary, calculate_excess
+from .metrics.excess import (ExcessResult, calc_ate_summary, calculate_excess,
+                             validate_excess_periods)
 from .outputs.plots import plot_counterfactual
 from .outputs.tables import save_ate_summary, save_excess_table, save_metrics_table
 
@@ -218,11 +219,14 @@ def run_single_its(
     split_method_resolved, split_kwargs = resolve_split_config(
         periods_cfg, split_method)
 
-    # 1b. Validate inputs
+    # 1b. Validate inputs. excess_periods is checked here too, so a stale or
+    # malformed section fails in seconds rather than after the model fit and
+    # the full bootstrap, which is where calculate_excess would first read it.
     validate_inputs(df, intervention_date, date_col, target_col,
                     covariate_cols, model_name,
                     split_method=split_method_resolved,
                     **split_kwargs)
+    validate_excess_periods(config.get("excess_periods"))
 
     # M2-6: Check date-sort and warn if DataFrame is unsorted
     dates_check = pd.to_datetime(df[date_col])
@@ -243,12 +247,19 @@ def run_single_its(
         if missing_strategy == "error":
             raise ValueError(
                 f"Target column '{target_col}' contains {n_missing} missing "
-                f"values. Set data.missing_data to 'drop' or 'interpolate' "
-                f"in config to handle them automatically."
+                "values. Set data.missing_data to 'interpolate' to fill them "
+                "on the regular grid, or repair the series upstream. Note "
+                "that 'drop' removes the rows entirely, which leaves a "
+                "gapped grid that fails frequency resolution -- use it only "
+                "when the removed rows sit at the series edges."
             )
         elif missing_strategy == "drop":
             warnings.warn(
-                f"Dropping {n_missing} row(s) with missing values in '{target_col}'.",
+                f"Dropping {n_missing} row(s) with missing values in "
+                f"'{target_col}'. If any dropped row is interior to the "
+                "series, the remaining dates no longer form a regular grid "
+                "and frequency resolution will fail; use 'interpolate' to "
+                "keep the grid complete.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -293,13 +304,19 @@ def run_single_its(
         model_params["freq"] = series_freq.alias
     model = _get_model(model_name, model_params)
 
-    # 3b. Warn about long-horizon ARIMA forecasts (B5)
-    holdout_days = len(splits.holdout_df)
-    if model_name == "arima" and holdout_days > 90:
+    # 3b. Warn about long-horizon ARIMA forecasts (B5). The horizon is a
+    # CALENDAR span, measured from the holdout dates themselves: counting
+    # rows would misread a 104-week holdout as 104 days on weekly data.
+    holdout_span_days = 0
+    if not splits.holdout_df.empty:
+        h_dates = pd.to_datetime(splits.holdout_df[date_col])
+        holdout_span_days = (h_dates.max() - h_dates.min()).days
+    if model_name == "arima" and holdout_span_days > 90:
         warnings.warn(
-            f"ARIMA with holdout_days={holdout_days}: ARIMA point forecasts "
-            "converge to the unconditional mean over long horizons, which can "
-            "bias the counterfactual estimate. Consider prophet_xgb or "
+            f"ARIMA with a holdout window spanning {holdout_span_days} "
+            "calendar days: ARIMA point forecasts converge to the "
+            "unconditional mean over long horizons, which can bias the "
+            "counterfactual estimate. Consider prophet_xgb or "
             "prophet_then_xgb for holdout windows beyond 90 days.",
             UserWarning,
             stacklevel=2,
