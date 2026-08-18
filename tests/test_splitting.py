@@ -148,6 +148,38 @@ def test_validate_observations_empty_train_raises():
                         holdout_obs=50)
 
 
+def test_split_nonpositive_windows_raise():
+    """A non-positive window must raise: test_days=-30 would silently pull
+    post-intervention rows into the training window (temporal leakage)."""
+    df, intv = _make_series(n_pre=100, n_post=50)
+    with pytest.raises(ValueError, match="test_days"):
+        prepare_splits(df, intv, split_method="days",
+                       test_days=-30, holdout_days=30)
+    with pytest.raises(ValueError, match="holdout_days"):
+        prepare_splits(df, intv, split_method="days",
+                       test_days=30, holdout_days=0)
+    with pytest.raises(ValueError, match="test_pct"):
+        prepare_splits(df, intv, split_method="percent", test_pct=-0.2)
+    with pytest.raises(ValueError, match="test_pct"):
+        prepare_splits(df, intv, split_method="percent", test_pct=1.5)
+    with pytest.raises(ValueError, match="test_obs"):
+        prepare_splits(df, intv, split_method="observations",
+                       test_obs=-10, holdout_obs=10)
+
+
+def test_min_test_obs_warns_on_empty_window():
+    """An EMPTY test window is the most degenerate case: downstream code
+    substitutes training metrics for test metrics, so it must warn."""
+    df, intv = _make_series(n_pre=100, n_post=50)
+    # Remove the 30 rows before the intervention so a 30-day test window
+    # catches nothing.
+    gap_start = intv - pd.Timedelta(days=30)
+    df_gapped = df[~((df["ds"] >= gap_start) & (df["ds"] < intv))]
+    with pytest.warns(UserWarning, match="EMPTY"):
+        prepare_splits(df_gapped, intv, split_method="days",
+                       test_days=30, holdout_days=30)
+
+
 def test_min_test_obs_warns_on_small_window():
     """Issue #29: a degenerate test window warns whatever its cause."""
     df, intv = _make_series(n_pre=100, n_post=50)
@@ -203,13 +235,37 @@ class TestResolveSplitConfig:
     def test_argument_overrides_config_key(self):
         from its2s.data_prep import resolve_split_config
         method, kwargs = resolve_split_config(
-            {"split_method": "percent", "test_pct": 0.30}, "days")
+            {"split_method": "percent"}, "days")
         assert method == "days"
         assert kwargs == {"test_days": 365, "holdout_days": 365}
+
+    def test_foreign_family_config_keys_raise(self):
+        # The raise-on-foreign-keys contract holds on the config path too:
+        # a window setting the user wrote is never silently ignored, whether
+        # the method comes from the config key or the override argument.
+        from its2s.data_prep import resolve_split_config
+        with pytest.raises(ValueError, match="test_days"):
+            resolve_split_config({"split_method": "percent",
+                                  "test_days": 180, "holdout_days": 90})
+        with pytest.raises(ValueError, match="test_pct"):
+            resolve_split_config(
+                {"split_method": "percent", "test_pct": 0.30}, "days")
+
+    def test_default_config_has_no_family_keys(self):
+        # The shipped params.yaml must not pre-set window keys for any
+        # family, or the foreign-key check would make the other families
+        # unreachable through configuration.
+        from its2s.data_prep import _METHOD_ARGS, resolve_split_config
+        from its2s.settings import load_config
+        periods = load_config()["periods"]
+        family_keys = [k for fam in _METHOD_ARGS.values() for k in fam]
+        assert not [k for k in family_keys if k in periods]
+        for method in _METHOD_ARGS:
+            resolve_split_config(periods, method)  # no raise for any method
 
     def test_config_not_mutated(self):
         from its2s.data_prep import resolve_split_config
         cfg = {"split_method": "percent", "test_pct": 0.30}
         before = dict(cfg)
-        resolve_split_config(cfg, "observations")
+        resolve_split_config(cfg)
         assert cfg == before

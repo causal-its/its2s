@@ -23,7 +23,12 @@ dependencies:
   - xgboost>=2.0
   - pip
   - pip:
-      - -e .
-      # Notebook execution for understanding_its2s/ (re-running the tutorials):
-      - ipykernel
-      - nbclient
+      # [tutorials] adds nbconvert + ipykernel so scripts/execute_tutorials.sh
+      # can re-execute the understanding_its2s/ notebooks in this environment.
+      # MERGE NOTE: a branch predating PR #73 (e.g. PR #57) may add bare
+      # `ipykernel` and `nbclient` lines here and conflict with this block.
+      # Resolve by keeping `-e .[tutorials]` and dropping both: nbconvert
+      # depends on nbclient, and ipykernel arrives via the extra. Declaring the
+      # notebook tooling in pyproject.toml is what reaches BOTH documented
+      # install paths (conda and venv); listing it here would reach only conda.
+      - -e .[tutorials]
