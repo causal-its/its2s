@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 # Lazy model import map: model name -> (module path, class name)
 _MODEL_IMPORT_MAP = {
     "prophet_xgb": (".models.prophet_xgb", "ProphetXGBHybridModel"),
-    "prophet_then_xgb": (".models.prophet_then_xgb", "ProphetThenXGBModel"),
     "neuralprophet": (".models.neuralprophet", "NeuralProphetModel"),
     "arima": (".models.arima", "ARIMAModel"),
 }
@@ -203,7 +202,7 @@ def run_single_its(
     covariate_cols : list[str], optional
         Covariate column names. Defaults to config value.
     model_name : str
-        Model to use. One of: prophet_xgb, prophet_then_xgb, neuralprophet, arima.
+        Model to use. One of: prophet_xgb, neuralprophet, arima.
     config_path : str or Path, optional
         Path to custom YAML config.
     config_overrides : dict, optional
@@ -339,8 +338,8 @@ def run_single_its(
             f"ARIMA with a holdout window spanning {holdout_span_days} "
             "calendar days: ARIMA point forecasts converge to the "
             "unconditional mean over long horizons, which can bias the "
-            "counterfactual estimate. Consider prophet_xgb or "
-            "prophet_then_xgb for holdout windows beyond 90 days.",
+            "counterfactual estimate. Consider prophet_xgb for "
+            "holdout windows beyond 90 days.",
             UserWarning,
             stacklevel=2,
         )

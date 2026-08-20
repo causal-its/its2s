@@ -61,7 +61,6 @@ class TestSettings:
         """GH #60, D-057: the shipped defaults are the string "auto", not YAML bools."""
         models = default_config["models"]
         for section in (models["prophet_xgb"]["prophet"],
-                        models["prophet_then_xgb"]["prophet"],
                         models["neuralprophet"]):
             for key in ("weekly_seasonality", "yearly_seasonality"):
                 assert section[key] == "auto"

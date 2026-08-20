@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 # ARIMA=100, NNETAR (-> NeuralProphet)=75, prophet_xgb=100
 _DEFAULT_N_TRIALS = {
     "prophet_xgb":      100,
-    "prophet_then_xgb": 100,
     "neuralprophet":    75,
     "arima":            100,
 }
@@ -78,7 +77,6 @@ _PROPHET_XGB_SPACE = {
 
 _SEARCH_SPACES = {
     "prophet_xgb":      _PROPHET_XGB_SPACE,
-    "prophet_then_xgb": _PROPHET_XGB_SPACE,
     "neuralprophet":    _NEURALPROPHET_SPACE,
     "arima":            _ARIMA_SPACE,
 }
@@ -270,7 +268,7 @@ def tune_model(
     intervention_date : str or pd.Timestamp
         Only pre-intervention data is used for tuning CV.
     model_name : str
-        One of "arima", "neuralprophet", "prophet_xgb", "prophet_then_xgb".
+        One of "arima", "neuralprophet", "prophet_xgb".
     n_trials : int or None
         Number of parameter combinations to evaluate. Defaults to model-specific
         values matching R reference (100 for most models, 75 for neuralprophet).
