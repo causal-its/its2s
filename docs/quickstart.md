@@ -141,4 +141,4 @@ To change any pipeline setting — window lengths, number of bootstrap draws, or
 
 - **`config_path`**: optional YAML merged on top of package defaults (`its2s/params.yaml`).
 - **`config_overrides`**: optional dict merged last (highest priority).
-- **`model_name`**: one of `prophet_xgb`, `prophet_then_xgb`, `neuralprophet`, `arima` (subject to optional dependencies).
+- **`model_name`**: one of `prophet_xgb`, `neuralprophet`, `arima` (subject to optional dependencies).

@@ -7,7 +7,7 @@ training data. A model that fits training data well but generalizes poorly to a 
 pre-event window will produce an unreliable counterfactual. Training fit and test fit
 can diverge substantially, particularly for flexible nonlinear models.
 
-Use `compare_models()` to evaluate all four models on the same series before committing:
+Use `compare_models()` to evaluate all three models on the same series before committing:
 
 ```python
 from its2s import compare_models
@@ -15,7 +15,7 @@ from its2s import compare_models
 comparison_df, results = compare_models(
     df,
     intervention_date="2022-06-01",
-    model_names=["prophet_xgb", "prophet_then_xgb", "neuralprophet", "arima"],
+    model_names=["prophet_xgb", "neuralprophet", "arima"],
 )
 print(comparison_df)
 ```
@@ -48,21 +48,6 @@ data to calibrate Prophet's changepoint detection reliably.
 **Computational cost**: moderate. Grows with the number of tuning trials (`n_trials`).
 Fitting a single model is fast; 100-trial tuning adds several minutes on a daily series
 of several years.
-
----
-
-## Prophet-then-XGB
-
-The same hybrid, fitted sequentially: Prophet is fitted first, then XGBoost is fitted
-on Prophet's residuals independently. The final prediction is Prophet's output plus
-XGBoost's residual correction.
-
-**When to use**: when the simultaneous Prophet+XGB variant shows unstable
-cross-validation performance, or as a diagnostic to quantify how much residual
-structure XGBoost captures after Prophet.
-
-Tuning parameters are identical to Prophet+XGB; the two models share a search space
-with the same structure.
 
 ---
 
