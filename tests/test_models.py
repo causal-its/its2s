@@ -1044,7 +1044,8 @@ class TestMakeTimeFeatures:
 
     def test_columns_values_and_index(self):
         from its2s.models.utils import make_time_features
-        # A Thursday, spanning a month and an ISO-week boundary.
+        # Starts on a Friday and stays inside January, so `month` is constant;
+        # the span deliberately crosses an ISO-week boundary (2020 week 53 -> 1).
         df = pd.DataFrame(
             {"ds": pd.date_range("2021-01-01", periods=10, freq="D")},
             index=range(100, 110),
