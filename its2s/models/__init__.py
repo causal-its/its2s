@@ -12,15 +12,11 @@ def __getattr__(name):
     if name == "ProphetXGBHybridModel":
         from .prophet_xgb import ProphetXGBHybridModel
         return ProphetXGBHybridModel
-    if name == "ProphetThenXGBModel":
-        from .prophet_then_xgb import ProphetThenXGBModel
-        return ProphetThenXGBModel
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
     "ProphetXGBHybridModel",
-    "ProphetThenXGBModel",
     "NeuralProphetModel",
     "ARIMAModel",
 ]

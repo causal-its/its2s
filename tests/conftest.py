@@ -53,13 +53,11 @@ def collect_model_params():
     """
     from its2s.models.arima import ARIMAModel
     from its2s.models.prophet_xgb import ProphetXGBHybridModel
-    from its2s.models.prophet_then_xgb import ProphetThenXGBModel
 
     params = [
         ("arima", ARIMAModel,
          {"seasonal": False, "m": 1, "stepwise": True, "suppress_warnings": True}),
         ("prophet_xgb", ProphetXGBHybridModel, {}),
-        ("prophet_then_xgb", ProphetThenXGBModel, {}),
     ]
     if _has_neuralprophet():
         from its2s.models.neuralprophet import NeuralProphetModel

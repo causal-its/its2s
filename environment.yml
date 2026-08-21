@@ -25,10 +25,14 @@ dependencies:
   - pip:
       # [tutorials] adds nbconvert + ipykernel so scripts/execute_tutorials.sh
       # can re-execute the understanding_its2s/ notebooks in this environment.
+      # [docs] adds mkdocs + material + jupyter + mkdocstrings so the same
+      # `mkdocs build --clean --strict` that gates CI (.github/workflows/docs.yml)
+      # and the Netlify deploy (netlify.toml) can be run locally before a PR.
+      # Both extras ride ONE editable install: two `-e .` lines would fight.
       # MERGE NOTE: a branch predating PR #73 (e.g. PR #57) may add bare
       # `ipykernel` and `nbclient` lines here and conflict with this block.
-      # Resolve by keeping `-e .[tutorials]` and dropping both: nbconvert
+      # Resolve by keeping `-e .[tutorials,docs]` and dropping both: nbconvert
       # depends on nbclient, and ipykernel arrives via the extra. Declaring the
-      # notebook tooling in pyproject.toml is what reaches BOTH documented
+      # notebook and docs tooling in pyproject.toml is what reaches BOTH documented
       # install paths (conda and venv); listing it here would reach only conda.
-      - -e .[tutorials]
+      - -e .[tutorials,docs]

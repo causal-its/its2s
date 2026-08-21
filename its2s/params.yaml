@@ -50,21 +50,6 @@ models:
       min_child_weight: 3
       gamma: 1.0
 
-  prophet_then_xgb:
-    prophet:
-      yearly_seasonality: auto  # resolved by the 730-day rule; the resolution is reported in BOTH directions; GH #60, D-057, D-080
-      weekly_seasonality: auto  # Prophet's spacing rule: off when observations are >= 7 days apart; GH #60
-      daily_seasonality: false
-      changepoint_prior_scale: 0.05
-    xgb:
-      n_estimators: 300
-      max_depth: 6
-      learning_rate: 0.05
-      subsample: 0.8
-      colsample_bytree: 0.8
-      min_child_weight: 3
-      gamma: 1.0
-
   neuralprophet:
     n_lags: 14  # AR window in OBSERVATIONS, not days: two weeks on daily data, 14 weeks on weekly; GH #59
     yearly_seasonality: auto  # resolved by the 730-day rule; the resolution is reported in BOTH directions; GH #60, D-057, D-080
@@ -168,6 +153,5 @@ tuning:
   # Default trial counts per model (matches R reference grid sizes)
   model_defaults:
     prophet_xgb: 100
-    prophet_then_xgb: 100
     neuralprophet: 75
     arima: 100

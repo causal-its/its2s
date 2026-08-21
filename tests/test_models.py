@@ -1,5 +1,5 @@
 # Description: Model-facing test suite for its2s package.
-#   All four models (arima, prophet_xgb, prophet_then_xgb, neuralprophet) are
+#   All three models (arima, prophet_xgb, neuralprophet) are
 #   exercised through parametrized loops wherever applicable.
 #   Covers: model contract, MBB bootstrap, model-specific unit tests,
 #           end-to-end integration, statistical validation, robustness,
@@ -55,7 +55,7 @@ _MODEL_NAMES_MARKS = [
             reason="neuralprophet not installed",
         ),
     )
-    for name in ["prophet_xgb", "prophet_then_xgb", "neuralprophet", "arima"]
+    for name in ["prophet_xgb", "neuralprophet", "arima"]
 ]
 
 
@@ -261,16 +261,6 @@ class TestModelBootstrap:
                        "narrowness is tracked in GH #41 (missing innovation "
                        "variance). Expected to resolve when the interval "
                        "construction gains the innovation term.",
-                strict=False))
-        elif name == "prophet_then_xgb":
-            request.applymarker(pytest.mark.xfail(
-                reason="Known limitation, not a test defect: on this 120-day "
-                       "train window the MBB CI is too narrow (GH #41, missing "
-                       "innovation variance; containment 0.6). Masked before "
-                       "D-057: the forced yearly basis, inestimable on 120 "
-                       "days, injected spurious bootstrap estimation variance "
-                       "that widened the CI. Expected to resolve when the "
-                       "interval construction gains the innovation term.",
                 strict=False))
         from its2s.bootstrap.mbb import MovingBlockBootstrap
         from its2s.data_prep import prepare_splits
@@ -560,56 +550,6 @@ class TestProphetXGBSpecific:
 
 
 # ===================================================================
-# ProphetThenXGB-Specific Unit Tests
-# ===================================================================
-class TestProphetThenXGBSpecific:
-    """Tests for ProphetThenXGBModel behaviors not shared with other models."""
-
-    def test_prophet_forecast_is_xgb_feature(self):
-        """Prophet residuals become XGB input features in the sequential model."""
-        from its2s.models.prophet_then_xgb import ProphetThenXGBModel
-        from its2s.data_prep import prepare_splits
-        df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1300)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
-        model = ProphetThenXGBModel(params={})
-        _run_quiet(model.fit, splits.train_df)
-        feature_names = model._xgb.get_booster().feature_names
-        assert "prophet_forecast" in feature_names
-
-    def test_clone_clears_prophet_and_xgb(self):
-        from its2s.models.prophet_then_xgb import ProphetThenXGBModel
-        from its2s.data_prep import prepare_splits
-        df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1301)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
-        model = ProphetThenXGBModel(params={})
-        _run_quiet(model.fit, splits.train_df)
-        clone = model.clone_fresh()
-        assert clone._prophet is None
-        assert clone._xgb is None
-        assert clone._fit_result is None
-
-    def test_residuals_near_zero_mean_on_long_series(self):
-        from its2s.models.prophet_then_xgb import ProphetThenXGBModel
-        from its2s.data_prep import prepare_splits
-        df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=1302)
-        splits = prepare_splits(df, intv, split_method="days", test_days=180, holdout_days=180)
-        model = ProphetThenXGBModel(params={})
-        fr = _run_quiet(model.fit, splits.train_df)
-        assert abs(np.mean(fr.residuals)) < 5.0
-
-    def test_with_covariates(self):
-        from its2s.models.prophet_then_xgb import ProphetThenXGBModel
-        from its2s.data_prep import prepare_splits
-        df, intv, _, cov_cols = make_series_with_covariates(seed=1303)
-        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
-        model = ProphetThenXGBModel(params={})
-        fr = _run_quiet(model.fit, splits.train_df, covariate_cols=cov_cols)
-        pr = _run_quiet(model.predict, splits.full_predict_df, covariate_cols=cov_cols)
-        assert len(fr.fitted_values) == len(splits.train_df)
-        assert len(pr.predicted) == len(splits.full_predict_df)
-
-
-# ===================================================================
 # Prophet weekly_seasonality "auto" default (GH #60)
 # ===================================================================
 class TestProphetWeeklySeasonalityAuto:
@@ -623,13 +563,10 @@ class TestProphetWeeklySeasonalityAuto:
 
     @staticmethod
     def _make_model(model_name):
-        if model_name == "prophet_xgb":
-            from its2s.models.prophet_xgb import ProphetXGBHybridModel
-            return ProphetXGBHybridModel(params={})
-        from its2s.models.prophet_then_xgb import ProphetThenXGBModel
-        return ProphetThenXGBModel(params={})
+        from its2s.models.prophet_xgb import ProphetXGBHybridModel
+        return ProphetXGBHybridModel(params={})
 
-    @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
+    @pytest.mark.parametrize("model_name", ["prophet_xgb"])
     def test_weekly_disabled_on_weekly_grid(self, model_name):
         df, _, _ = make_weekly_series(seed=1500)
         model = self._make_model(model_name)
@@ -637,7 +574,7 @@ class TestProphetWeeklySeasonalityAuto:
         assert "weekly" not in model._prophet.seasonalities
         assert "yearly" in model._prophet.seasonalities
 
-    @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
+    @pytest.mark.parametrize("model_name", ["prophet_xgb"])
     def test_weekly_enabled_on_daily_grid(self, model_name):
         df, _, _ = make_short_series(n_pre=180, n_post=30, seed=1501)
         model = self._make_model(model_name)
@@ -658,7 +595,7 @@ class TestProphetYearlySeasonalityAuto:
     near the boundary can see which side they landed on.
     """
 
-    @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
+    @pytest.mark.parametrize("model_name", ["prophet_xgb"])
     def test_yearly_disabled_with_warning_on_short_history(self, model_name):
         df, _, _ = make_short_series(n_pre=180, n_post=30, seed=1502)
         model = TestProphetWeeklySeasonalityAuto._make_model(model_name)
@@ -666,7 +603,7 @@ class TestProphetYearlySeasonalityAuto:
             model.fit(df.iloc[:180])
         assert "yearly" not in model._prophet.seasonalities
 
-    @pytest.mark.parametrize("model_name", ["prophet_xgb", "prophet_then_xgb"])
+    @pytest.mark.parametrize("model_name", ["prophet_xgb"])
     def test_yearly_enabled_with_warning_on_long_history(self, model_name):
         df, _, _ = make_daily_series(n_pre=800, n_post=30, seed=1503)
         model = TestProphetWeeklySeasonalityAuto._make_model(model_name)
@@ -700,8 +637,8 @@ class TestProphetYearlySeasonalityAuto:
     def test_yearly_cliff_is_where_the_rule_says_and_is_announced(self):
         """Pin the discontinuity end to end so it cannot move silently.
 
-        Scoped to prophet_xgb: this is new coverage, and prophet_then_xgb is
-        slated for retirement. Asserts WHERE the cliff sits and that both
+        Scoped to prophet_xgb, the sole surviving Prophet-based model.
+        Asserts WHERE the cliff sits and that both
         sides announce themselves -- deliberately NOT how large the resulting
         difference in the estimate is, which would enshrine the behaviour
         rather than expose it.
@@ -1092,24 +1029,46 @@ class TestModelComparison:
             assert total_ate > 0, (
                 f"[{model_name}] Expected positive total ATE, got {total_ate:.2f}")
 
-    def test_prophet_models_produce_different_predictions(self):
-        """ProphetXGB and ProphetThenXGB should not produce identical predictions."""
-        from its2s import run_single_its
-        df, intv, _ = make_daily_series(intervention_effect=10.0, seed=5012)
-        cfg = dict(_FAST)
-        r1 = _run_quiet(run_single_its, df, intv, model_name="prophet_xgb",
-                        seed=42, config_overrides=cfg)
-        r2 = _run_quiet(run_single_its, df, intv, model_name="prophet_then_xgb",
-                        seed=42, config_overrides=cfg)
-        assert not np.allclose(r1.bootstrap_result.predicted,
-                               r2.bootstrap_result.predicted, atol=0.1)
 
-    def test_prophet_time_features_are_consistent(self):
-        """Both Prophet modules expose _make_time_features; output must match."""
-        from its2s.models.prophet_xgb import _make_time_features as tf1
-        from its2s.models.prophet_then_xgb import _make_time_features as tf2
-        df = pd.DataFrame({"ds": pd.date_range("2021-01-01", periods=30, freq="D")})
-        pd.testing.assert_frame_equal(tf1(df), tf2(df))
+# ===================================================================
+# Shared time-feature helper (D-091)
+# ===================================================================
+class TestMakeTimeFeatures:
+    """Direct unit test of its2s.models.utils.make_time_features.
+
+    Replaces test_prophet_time_features_are_consistent, deleted with the
+    prophet_then_xgb retirement (D-091). That test was already vacuous: both
+    Prophet modules aliased THE SAME utils object, so it compared a function's
+    output to itself. This asserts the helper's actual contract instead.
+    """
+
+    def test_columns_values_and_index(self):
+        from its2s.models.utils import make_time_features
+        # Starts on a Friday and stays inside January, so `month` is constant;
+        # the span deliberately crosses an ISO-week boundary (2020 week 53 -> 1).
+        df = pd.DataFrame(
+            {"ds": pd.date_range("2021-01-01", periods=10, freq="D")},
+            index=range(100, 110),
+        )
+        out = make_time_features(df)
+
+        assert list(out.columns) == ["day_of_week", "day_of_year", "month", "week_of_year"]
+        # The input index is preserved, so callers can concat without realigning.
+        assert list(out.index) == list(df.index)
+        # 2021-01-01 was a Friday: pandas dayofweek is Monday=0, so Friday=4.
+        assert out["day_of_week"].tolist() == [4, 5, 6, 0, 1, 2, 3, 4, 5, 6]
+        assert out["day_of_year"].tolist() == list(range(1, 11))
+        assert out["month"].unique().tolist() == [1]
+        # ISO weeks: 2021-01-01 falls in ISO week 53 OF 2020, rolling to 1 on the 4th.
+        assert out["week_of_year"].tolist() == [53, 53, 53, 1, 1, 1, 1, 1, 1, 1]
+        assert out["week_of_year"].dtype.kind == "i"
+
+    def test_accepts_a_custom_date_col_and_string_dates(self):
+        from its2s.models.utils import make_time_features
+        df = pd.DataFrame({"date": ["2021-03-14", "2021-03-15"]})
+        out = make_time_features(df, date_col="date")
+        assert out["month"].tolist() == [3, 3]
+        assert out["day_of_week"].tolist() == [6, 0]
 
 
 # ===================================================================

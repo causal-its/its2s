@@ -16,7 +16,6 @@ for nb in \
     step2_cross_validation.ipynb \
     step3_hyperparameter_tuning.ipynb \
     step4a_model_prophet_xgb.ipynb \
-    step4b_model_prophet_then_xgb.ipynb \
     step4c_model_neuralprophet.ipynb \
     step4d_model_arima.ipynb \
     step5_bootstrap_mbb.ipynb \
