@@ -304,3 +304,32 @@ class TestYamlRetired:
         import its2s
         with pytest.raises(TypeError, match="config_path"):
             getattr(its2s, name)(None, config_path="params.yaml")
+
+
+# ===================================================================
+# The old path declares once per training window (spec 4.7, GH #74)
+# ===================================================================
+@pytest.mark.parametrize("family, alias, rows, expected", [
+    # Weekly, 160 CV rows: fold 1 trains on 80 rows, under the old 730-day
+    # and 2m = 104 rules; the CV window is over both.
+    ("prophet_xgb", "W-SUN", 160, ("annual",)),
+    ("arima", "W-SUN", 160, ("annual",)),
+])
+def test_every_cv_fold_carries_the_cv_window_declaration(monkeypatch, family, alias,
+                                                         rows, expected):
+    from its2s.cross_validation import time_series_cv
+    from its2s.models.families import load_family_class
+    cls = load_family_class(family)
+    seen = []
+
+    def fake_fit(self, train_df, target_col="y", date_col="ds", covariate_cols=None):
+        seen.append((len(train_df), self.seasonality.cycles))
+        raise RuntimeError("stop after recording")  # the fold is then skipped
+
+    monkeypatch.setattr(cls, "fit", fake_fit)
+    df = _series(alias, rows + 10, seed=5)
+    with pytest.raises(RuntimeError, match="All CV folds failed"):
+        time_series_cv(df, df["ds"].iloc[-1], model_name=family, n_folds=3,
+                       split_method="percent", cv_end_date=df["ds"].iloc[rows])
+    assert seen[0][0] < 104
+    assert {cycles for _, cycles in seen} == {expected}

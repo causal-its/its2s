@@ -15,7 +15,7 @@ from .metrics.error_metrics import (
     MetricsResult, compute_metrics, resolve_metrics_seasonality,
 )
 from .models.families import load_family_class
-from .seasonality import legacy_seasonality, resolve_arima_m
+from .seasonality import legacy_seasonality
 from .settings import get_model_config, load_config
 
 logger = logging.getLogger(__name__)
@@ -287,7 +287,7 @@ def time_series_cv(df, intervention_date, model_name="arima",
 
     # Resolve the MASE period m once for all folds, guarded against the
     # SMALLEST training window (fold 1), so m is constant and fold metrics
-    # stay comparable (GH #62). The series frequency also sizes every fold's
+    # stay comparable (GH #62). The series frequency also sizes the folds'
     # seasonal declaration.
     series_freq = resolve_frequency(cv_df[date_col])
     seasonality = resolve_metrics_seasonality(
@@ -297,20 +297,16 @@ def time_series_cv(df, intervention_date, model_name="arima",
     model_cls = load_family_class(model_name)
     model_params = get_model_config(config, model_name)
 
-    # Resolve ARIMA's seasonal period m once for all folds, guarded against
-    # the SMALLEST training window, for the same reasons as the MASE m above:
-    # a per-fold resolve could flip m between folds as the training window
-    # grows, and any fallback warning would be swallowed by the fold loop's
-    # warning suppression. Injecting the resolved integer keeps every fold's
-    # fit on the silent explicit path (GH #59, D-055 pattern).
-    if (model_name == "arima"
-            and model_params.get("m", "auto") == "auto"
-            and model_params.get("seasonal", True)):
-        model_params["m"] = resolve_arima_m(
-            "auto", n_train=min_train_obs, series_freq=series_freq,
-        )
-        logger.info("CV: ARIMA seasonal period fixed at m=%d for all folds",
-                    model_params["m"])
+    # The old path's declaration, derived ONCE against the whole CV window
+    # (spec_P11.04.02 4.7), so every fold carries the seasonal structure the
+    # final fit on the training window will carry: a fold under 730 days no
+    # longer drops the yearly term, nor a fold under 2m ARIMA's period
+    # (GH #74). Built before the fold loop so a config error raises rather
+    # than failing a fold, and its resolution is reported once.
+    declared = legacy_seasonality(model_name, model_params, cv_df,
+                                  series_freq, date_col, target_col)
+    logger.info("CV: every fold carries the seasonal cycles %s",
+                list(declared.cycles))
 
     fold_results = []
 
@@ -327,13 +323,6 @@ def time_series_cv(df, intervention_date, model_name="arima",
         train_fold = cv_df.iloc[:test_start_idx].copy()
         test_fold = cv_df.iloc[test_start_idx:test_end_idx].copy()
 
-        # The old path's per-fit declaration (spec_P11.04.02 4.7), built
-        # outside the try so a config error raises rather than failing the
-        # fold; its auto-rule warnings are suppressed like the fit's.
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            declared = legacy_seasonality(model_name, model_params, train_fold,
-                                          series_freq, date_col, target_col)
         model = model_cls(params=model_params, seasonality=declared)
         try:
             with warnings.catch_warnings():
