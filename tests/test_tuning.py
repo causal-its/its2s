@@ -488,11 +488,11 @@ class TestTuneModelCvEndDate:
         df = self._df()
         overrides = {
             "periods": {"split_method": "days",
-                        "test_days": 30, "holdout_days": 30},
+                        "test_days": 30, "post_event_days": 30},
             "models": {"arima": {"max_p": 99}},
         }
         expected = prepare_splits(df, self.INTV, split_method="days",
-                                  test_days=30, holdout_days=30,
+                                  test_days=30, post_event_days=30,
                                   min_test_obs=0).test_df["ds"].min()
         assert expected != prepare_splits(df, self.INTV).test_df["ds"].min()
         result = tune_model(df, self.INTV, "arima", n_trials=2, n_folds=2,

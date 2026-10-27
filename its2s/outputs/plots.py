@@ -1,4 +1,4 @@
-# Description: Counterfactual plot with train fit, test/holdout predictions, and CI ribbon.
+# Description: Counterfactual plot with training fit, test/post-event predictions, and CI ribbon.
 # Usage: from its2s.outputs.plots import plot_counterfactual
 # Dependencies: matplotlib, pandas
 
@@ -16,10 +16,10 @@ _DEFAULT_PLOT_COLORS = {
     "fit": "#2166AC",
     "counterfactual": "#B2182B",
     "intervention": "#4DAF4A",
-    "holdout": "#FEE08B",
+    "post_event": "#FEE08B",
 }
 
-_PLOT_COLOR_SEQUENCE_KEYS = ("fit", "counterfactual", "intervention", "holdout")
+_PLOT_COLOR_SEQUENCE_KEYS = ("fit", "counterfactual", "intervention", "post_event")
 
 
 def _resolve_plot_colors(plot_cfg):
@@ -78,7 +78,7 @@ def plot_counterfactual(pipeline_result, splits, save_path=None, config=None):
     for split_df, label, color in [
         (splits.train_df, None, colors["observed"]),
         (splits.test_df, None, colors["observed"]),
-        (splits.holdout_df, None, colors["observed"]),
+        (splits.post_event_df, None, colors["observed"]),
     ]:
         if not split_df.empty and target_col in split_df.columns:
             ax.plot(pd.to_datetime(split_df[date_col]), split_df[target_col],
@@ -91,7 +91,7 @@ def plot_counterfactual(pipeline_result, splits, save_path=None, config=None):
     ax.plot(train_dates, fr.fitted_values, color=colors["fit"], linewidth=1.0,
             alpha=0.8, label="Model fit (train)")
 
-    # Predicted line on test + holdout
+    # Predicted line on test + post-event
     pred_dates = pd.to_datetime(br.dates)
     ax.plot(pred_dates, br.predicted, color=colors["counterfactual"], linewidth=1.2,
             label="Counterfactual prediction")
@@ -105,11 +105,11 @@ def plot_counterfactual(pipeline_result, splits, save_path=None, config=None):
     ax.axvline(intervention, color=colors["intervention"], linestyle="--", linewidth=1.2,
                label="Intervention")
 
-    # Holdout shading
-    if not splits.holdout_df.empty:
-        h_start = pd.to_datetime(splits.holdout_df[date_col]).min()
-        h_end = pd.to_datetime(splits.holdout_df[date_col]).max()
-        ax.axvspan(h_start, h_end, color=colors["holdout"], alpha=0.2, label="Holdout period")
+    # Post-event shading
+    if not splits.post_event_df.empty:
+        post_start = pd.to_datetime(splits.post_event_df[date_col]).min()
+        post_end = pd.to_datetime(splits.post_event_df[date_col]).max()
+        ax.axvspan(post_start, post_end, color=colors["post_event"], alpha=0.2, label="Post-event period")
 
     ax.set_xlabel("Date", fontsize=axis_label_fontsize)
     ax.set_ylabel(target_col, fontsize=axis_label_fontsize)

@@ -340,7 +340,7 @@ def tune_model(
     boundary and the run's actual window identical:
 
         overrides = {"periods": {"split_method": "days",
-                                 "test_days": 365, "holdout_days": 365}}
+                                 "test_days": 365, "post_event_days": 365}}
         result = tune_model(
             df, "2025-01-07", "prophet_xgb",
             n_trials=100, n_folds=5,
