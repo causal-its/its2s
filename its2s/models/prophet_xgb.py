@@ -13,6 +13,13 @@ from .base import BaseModel, FitResult, PredictionResult
 from .families import get_family
 from .utils import make_time_features as _make_time_features
 
+# XGBoost's calendar features follow the declared cycles (spec_P11.04.02
+# OQ-4): with no annual cycle declared, XGBoost gets no annual calendar to
+# rebuild one from. Column order is make_time_features'.
+_TIME_FEATURES = ("day_of_week", "day_of_year", "month", "week_of_year")
+_CYCLE_FEATURES = {"weekly": {"day_of_week"},
+                   "annual": {"day_of_year", "month", "week_of_year"}}
+
 
 class ProphetXGBHybridModel(BaseModel):
     """Hybrid: Prophet captures trend+seasonality, XGBoost models the residuals.
@@ -22,7 +29,10 @@ class ProphetXGBHybridModel(BaseModel):
     Final prediction = prophet_components + xgb_residual_prediction.
 
     Prophet carries exactly the declared cycles (yearly iff "annual", weekly
-    iff "weekly", never daily); nothing is left on "auto".
+    iff "weekly", never daily); nothing is left on "auto". XGBoost's calendar
+    features follow the same cycles, and when it has no feature at all (no
+    cycle, no covariate) the XGBoost stage is skipped: the model is Prophet
+    alone (spec OQ-13).
     """
 
     spec = get_family("prophet_xgb")
@@ -45,8 +55,12 @@ class ProphetXGBHybridModel(BaseModel):
             changepoint_range=p_params["changepoint_range"],
         )
 
+    def _time_feature_cols(self):
+        wanted = set().union(*(_CYCLE_FEATURES[c] for c in self.seasonality.cycles))
+        return [c for c in _TIME_FEATURES if c in wanted]
+
     def _xgb_features(self, df, date_col, covariate_cols):
-        features = _make_time_features(df, date_col)
+        features = _make_time_features(df, date_col)[self._time_feature_cols()]
         if covariate_cols:
             for col in covariate_cols:
                 features[col] = df[col].values
@@ -70,11 +84,15 @@ class ProphetXGBHybridModel(BaseModel):
         residuals_for_xgb = y - prophet_components
 
         xgb_features = self._xgb_features(train_df, date_col, covariate_cols)
-        self._xgb = XGBRegressor(**self.params["xgb"])
-        self._xgb.fit(xgb_features, residuals_for_xgb)
+        if xgb_features.shape[1]:
+            self._xgb = XGBRegressor(**self.params["xgb"])
+            self._xgb.fit(xgb_features, residuals_for_xgb)
+            xgb_fitted = self._xgb.predict(xgb_features)
+        else:
+            self._xgb, xgb_fitted = None, 0.0
 
         # Combined fitted values
-        fitted_values = prophet_components + self._xgb.predict(xgb_features)
+        fitted_values = prophet_components + xgb_fitted
 
         self._fit_result = FitResult(
             fitted_values=fitted_values,
@@ -93,8 +111,10 @@ class ProphetXGBHybridModel(BaseModel):
         prophet_components = self._prophet.predict(prophet_df)["yhat"].values
 
         # XGB residual prediction
-        xgb_features = self._xgb_features(target_df, date_col, covariate_cols)
-        combined = prophet_components + self._xgb.predict(xgb_features)
+        combined = prophet_components
+        if self._xgb is not None:
+            xgb_features = self._xgb_features(target_df, date_col, covariate_cols)
+            combined = combined + self._xgb.predict(xgb_features)
 
         actual = target_df[target_col].values if target_col in target_df.columns else None
 
@@ -111,16 +131,18 @@ class ProphetXGBHybridModel(BaseModel):
     def seasonal_components(self):
         """Fitted Prophet seasonalities and the XGB time-feature columns."""
         return {"prophet": sorted(self._prophet.seasonalities),
-                "xgb_time_features": list(_make_time_features(
-                    pd.DataFrame({"ds": pd.to_datetime([])}), "ds").columns)}
+                "xgb_time_features": self._time_feature_cols()}
 
     def _save_fitted(self, directory):
         (directory / "prophet.json").write_text(model_to_json(self._prophet))
-        self._xgb.save_model(directory / "xgb.json")
+        if self._xgb is not None:
+            self._xgb.save_model(directory / "xgb.json")
 
     def _load_fitted(self, directory):
         self._prophet = model_from_json((directory / "prophet.json").read_text())
-        self._xgb = XGBRegressor()
-        self._xgb.load_model(directory / "xgb.json")
+        self._xgb = None
+        if (directory / "xgb.json").exists():
+            self._xgb = XGBRegressor()
+            self._xgb.load_model(directory / "xgb.json")
         # A loaded model can predict but carries no in-sample fit.
         self._fit_result = None

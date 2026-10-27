@@ -197,9 +197,13 @@ _SHORT_DAYS = {"prophet_xgb": 400, "arima": 600}
 
 _V8_CASES = [
     # (family, frequency, cycles, expected seasonal_components subset)
-    ("prophet_xgb", "D", ("weekly", "annual"), {"prophet": ["weekly", "yearly"]}),
-    ("prophet_xgb", "D", ("annual",), {"prophet": ["yearly"]}),
-    ("prophet_xgb", "D", (), {"prophet": []}),
+    ("prophet_xgb", "D", ("weekly", "annual"),
+     {"prophet": ["weekly", "yearly"],
+      "xgb_time_features": ["day_of_week", "day_of_year", "month", "week_of_year"]}),
+    ("prophet_xgb", "D", ("annual",),
+     {"prophet": ["yearly"],
+      "xgb_time_features": ["day_of_year", "month", "week_of_year"]}),
+    ("prophet_xgb", "D", (), {"prophet": [], "xgb_time_features": []}),
     ("arima", "W-SUN", ("annual",), {"m": 52, "seasonal_search": True}),
     ("arima", "W-SUN", (), {"m": 1, "seasonal_search": False}),
 ]
@@ -404,3 +408,24 @@ def test_every_search_dimension_is_a_model_parameter():
             section, _, key = dim.rpartition("__")
             holder = spec.defaults[section] if section else spec.defaults
             assert key in holder, f"{name}: {dim} has no default, so no fit reads it"
+
+
+# ===================================================================
+# No cycle and no covariate: prophet_xgb is Prophet alone (spec OQ-13)
+# ===================================================================
+def test_prophet_xgb_without_features_is_prophet_alone(tmp_path):
+    from its2s.models.prophet_xgb import ProphetXGBHybridModel
+    df = _series("W-SUN", 120, seed=10)
+    model = ProphetXGBHybridModel(params={}, seasonality=declared("W-SUN"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model.fit(df.iloc[:100])
+        pred = model.predict(df.iloc[100:]).predicted
+        prophet_only = model._prophet.predict(
+            df.iloc[100:][["ds"]].reset_index(drop=True))["yhat"].to_numpy()
+        model.save(tmp_path)
+        loaded = ProphetXGBHybridModel.load(tmp_path)
+        reloaded = loaded.predict(df.iloc[100:]).predicted
+    assert model._xgb is None and loaded._xgb is None
+    np.testing.assert_array_equal(pred, prophet_only)
+    np.testing.assert_array_equal(pred, reloaded)
