@@ -333,3 +333,22 @@ def test_every_cv_fold_carries_the_cv_window_declaration(monkeypatch, family, al
                        split_method="percent", cv_end_date=df["ds"].iloc[rows])
     assert seen[0][0] < 104
     assert {cycles for _, cycles in seen} == {expected}
+
+
+# ===================================================================
+# Every point of the ARIMA search space can be fit (spec OQ-12, F-012)
+# ===================================================================
+@pytest.mark.parametrize("bounds", [
+    {"max_p": 1, "max_q": 1, "max_d": 0},
+    {"max_p": 1, "max_q": 5, "max_d": 2},
+    {"max_p": 5, "max_q": 1, "max_d": 1},
+])
+def test_arima_fits_at_the_low_edges_of_its_space(bounds):
+    from its2s.models.arima import ARIMAModel
+    df = _series("D", 120, seed=6)
+    model = ARIMAModel(params=bounds, seasonality=declared("D"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model.fit(df)
+    p, d, q = model._fixed_order
+    assert p <= bounds["max_p"] and q <= bounds["max_q"] and d <= bounds["max_d"]

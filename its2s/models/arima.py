@@ -20,6 +20,11 @@ _M_ROUNDING_WARN = 0.01
 # on weekly, monthly or quarterly data.
 _HONOURED = {("weekly", 7), ("annual", 52), ("annual", 12), ("annual", 4)}
 
+# auto_arima's own starting orders. It raises when a bound is below its start
+# (and when max_d is 0), which tuning would score as inf and silently lose
+# (spec_P11.04.02 OQ-12, F-012), so each search starts at min(start, bound).
+_START = {"p": 2, "q": 2}
+
 
 def declared_m(seasonality):
     """The integer seasonal period ARIMA carries for a declaration (OQ-3).
@@ -90,8 +95,11 @@ class ARIMAModel(BaseModel):
             self._model = pm.auto_arima(
                 y,
                 exogenous=exog,
+                start_p=min(_START["p"], p["max_p"]),
                 max_p=p["max_p"],
+                d=0 if p["max_d"] == 0 else None,
                 max_d=p["max_d"],
+                start_q=min(_START["q"], p["max_q"]),
                 max_q=p["max_q"],
                 seasonal=self._m > 1,
                 m=self._m,
