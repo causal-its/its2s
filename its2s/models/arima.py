@@ -23,7 +23,7 @@ _HONOURED = {("weekly", 7), ("annual", 52), ("annual", 12), ("annual", 4)}
 # auto_arima's own starting orders. It raises when a bound is below its start
 # (and when max_d is 0), which tuning would score as inf and silently lose
 # (spec_P11.04.02 OQ-12, F-012), so each search starts at min(start, bound).
-_START = {"p": 2, "q": 2}
+_START = {"p": 2, "q": 2, "P": 1, "Q": 1}
 
 
 def declared_m(seasonality):
@@ -101,6 +101,12 @@ class ARIMAModel(BaseModel):
                 max_d=p["max_d"],
                 start_q=min(_START["q"], p["max_q"]),
                 max_q=p["max_q"],
+                start_P=min(_START["P"], p["max_P"]),
+                max_P=p["max_P"],
+                D=0 if p["max_D"] == 0 else None,
+                max_D=p["max_D"],
+                start_Q=min(_START["Q"], p["max_Q"]),
+                max_Q=p["max_Q"],
                 seasonal=self._m > 1,
                 m=self._m,
                 stepwise=p["stepwise"],

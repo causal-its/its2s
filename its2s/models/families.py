@@ -40,7 +40,6 @@ _NEURALPROPHET_SPACE = {
     "epochs":          (50,    200,  "int",   "linear"),
     "learning_rate":   (0.001, 0.1,  "float", "log"),
     "batch_size":      (16,    128,  "int",   "linear"),
-    "n_hidden_layers": (0,     2,    "int",   "linear"),
 }
 
 # Mirrors R phxgb: 3 Prophet params + 7 XGBoost params = 10 total (R had 11,
@@ -88,7 +87,11 @@ FAMILIES = {
         withheld_reason=None,
         withheld_issue=None,
         defaults={
-            "prophet": {"changepoint_prior_scale": 0.05},
+            # seasonality_prior_scale and changepoint_range at Prophet's own
+            # defaults, so an untuned fit is unchanged by their wiring (#76).
+            "prophet": {"changepoint_prior_scale": 0.05,
+                        "seasonality_prior_scale": 10.0,
+                        "changepoint_range": 0.8},
             "xgb": {"n_estimators": 300, "max_depth": 6, "learning_rate": 0.05,
                     "subsample": 0.8, "colsample_bytree": 0.8,
                     "min_child_weight": 3, "gamma": 1.0},
@@ -102,8 +105,11 @@ FAMILIES = {
         status="available",
         withheld_reason=None,
         withheld_issue=None,
-        defaults={"max_p": 5, "max_d": 2, "max_q": 5, "stepwise": True,
-                  "suppress_warnings": True},
+        # max_P, max_D, max_Q at auto_arima's own defaults, so an untuned fit
+        # is unchanged by their wiring.
+        defaults={"max_p": 5, "max_d": 2, "max_q": 5,
+                  "max_P": 2, "max_D": 1, "max_Q": 2,
+                  "stepwise": True, "suppress_warnings": True},
         search_space=_ARIMA_SPACE,
         starter_n_trials=100,
         class_path=(".arima", "ARIMAModel"),

@@ -352,3 +352,55 @@ def test_arima_fits_at_the_low_edges_of_its_space(bounds):
         model.fit(df)
     p, d, q = model._fixed_order
     assert p <= bounds["max_p"] and q <= bounds["max_q"] and d <= bounds["max_d"]
+
+
+def test_arima_fits_at_the_low_edges_of_its_seasonal_space():
+    from its2s.models.arima import ARIMAModel
+    df = _series("D", 120, seed=7)
+    model = ARIMAModel(params={"max_P": 0, "max_D": 0, "max_Q": 0},
+                       seasonality=declared("D", "weekly"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model.fit(df)
+    assert model._fixed_seasonal_order[:3] == (0, 0, 0)
+
+
+# ===================================================================
+# Every search dimension reaches the model (spec OQ-1, GH #72, #76)
+# ===================================================================
+def test_arima_seasonal_bounds_reach_auto_arima(monkeypatch):
+    import its2s.models.arima as arima_mod
+    captured = {}
+
+    class _Stub:
+        order, seasonal_order = (1, 0, 0), (0, 0, 0, 7)
+
+        def predict_in_sample(self, exogenous=None):
+            return np.zeros(50)
+
+    monkeypatch.setattr(arima_mod.pm, "auto_arima",
+                        lambda y, **kw: captured.update(kw) or _Stub())
+    bounds = {"max_P": 3, "max_D": 1, "max_Q": 0}
+    model = arima_mod.ARIMAModel(params=bounds, seasonality=declared("D", "weekly"))
+    model.fit(_series("D", 50, seed=8))
+    assert {k: captured[k] for k in bounds} == bounds
+    assert captured["start_Q"] == 0
+
+
+def test_prophet_tuned_dimensions_reach_prophet():
+    from its2s.models.prophet_xgb import ProphetXGBHybridModel
+    params = {"prophet": {"seasonality_prior_scale": 0.5, "changepoint_range": 0.6}}
+    model = ProphetXGBHybridModel(params=params, seasonality=declared("D", "weekly"))
+    prophet = model._build_prophet()
+    assert prophet.seasonality_prior_scale == 0.5
+    assert prophet.changepoint_range == 0.6
+
+
+def test_every_search_dimension_is_a_model_parameter():
+    # No family samples a dimension its fit ignores (contract 5.7).
+    assert "n_hidden_layers" not in get_family("neuralprophet").search_space
+    for name, spec in FAMILIES.items():
+        for dim in spec.search_space:
+            section, _, key = dim.rpartition("__")
+            holder = spec.defaults[section] if section else spec.defaults
+            assert key in holder, f"{name}: {dim} has no default, so no fit reads it"

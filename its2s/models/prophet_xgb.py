@@ -41,6 +41,8 @@ class ProphetXGBHybridModel(BaseModel):
             weekly_seasonality="weekly" in cycles,
             daily_seasonality=False,
             changepoint_prior_scale=p_params["changepoint_prior_scale"],
+            seasonality_prior_scale=p_params["seasonality_prior_scale"],
+            changepoint_range=p_params["changepoint_range"],
         )
 
     def _xgb_features(self, df, date_col, covariate_cols):
