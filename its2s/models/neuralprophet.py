@@ -3,14 +3,12 @@
 # Dependencies: neuralprophet, numpy, pandas
 
 import copy
-import logging
-import warnings
 
-import numpy as np
 import pandas as pd
 from neuralprophet import NeuralProphet, set_log_level
 
-from .base import BaseModel, FitResult, PredictionResult, report_auto_yearly_resolution
+from .base import BaseModel, FitResult, PredictionResult
+from .families import get_family
 from ..frequency import resolve_frequency
 
 
@@ -21,25 +19,32 @@ class NeuralProphetModel(BaseModel):
     calendar days: the default 14 is a two-week AR window on daily data but a
     14-week window on a weekly series. The first n_lags training rows are AR
     warmup and produce no fitted value.
+
+    Withheld at launch (GH #53, contract 5.7): the class serves the old path
+    until P11.04.07, and a fitted model cannot be saved.
     """
 
-    def __init__(self, params=None):
-        super().__init__(params)
+    spec = get_family("neuralprophet")
+    _libraries = ("neuralprophet",)
+
+    def __init__(self, params, seasonality):
+        super().__init__(params, seasonality)
         self._model = None
-        self._covariate_cols = None
         self._date_col = None
         self._target_col = None
 
     def _build_model(self):
         p = self.params
+        cycles = self.seasonality.cycles
         set_log_level("ERROR")
         model = NeuralProphet(
-            n_lags=p.get("n_lags", 14),
-            yearly_seasonality=p.get("yearly_seasonality", "auto"),
-            weekly_seasonality=p.get("weekly_seasonality", "auto"),
-            learning_rate=p.get("learning_rate", 0.01),
-            epochs=p.get("epochs", 100),
-            batch_size=p.get("batch_size", 64),
+            n_lags=p["n_lags"],
+            yearly_seasonality="annual" in cycles,
+            weekly_seasonality="weekly" in cycles,
+            daily_seasonality=False,
+            learning_rate=p["learning_rate"],
+            epochs=p["epochs"],
+            batch_size=p["batch_size"],
         )
         return model
 
@@ -60,8 +65,6 @@ class NeuralProphetModel(BaseModel):
 
         self._model = self._build_model()
         np_df = self._prep_df(train_df, date_col, target_col, covariate_cols)
-        report_auto_yearly_resolution(
-            np_df, self.params.get("yearly_seasonality", "auto"))
 
         if covariate_cols:
             for col in covariate_cols:
@@ -105,4 +108,29 @@ class NeuralProphetModel(BaseModel):
         )
 
     def clone_fresh(self):
-        return NeuralProphetModel(params=copy.deepcopy(self.params))
+        return NeuralProphetModel(params=copy.deepcopy(self.params),
+                                  seasonality=self.seasonality)
+
+    def seasonal_components(self):
+        """The seasonalities the fitted model was configured with."""
+        periods = self._model.config_seasonality.periods
+        return {"neuralprophet": sorted(name for name, period in periods.items()
+                                        if period.resolution > 0)}
+
+    def save(self, directory):
+        raise NotImplementedError(
+            f"neuralprophet is withheld (GitHub issue {self.spec.withheld_issue}): "
+            f"{self.spec.withheld_reason}. It cannot be saved.")
+
+    @classmethod
+    def load(cls, directory):
+        raise NotImplementedError(
+            f"neuralprophet is withheld (GitHub issue {cls.spec.withheld_issue}); "
+            "there is no saved form to load.")
+
+    # save and load are refused above, so these are never reached.
+    def _save_fitted(self, directory):
+        raise NotImplementedError
+
+    def _load_fitted(self, directory):
+        raise NotImplementedError

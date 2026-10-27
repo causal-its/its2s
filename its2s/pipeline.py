@@ -14,6 +14,8 @@ from .diagnostics import compute_diagnostics, DiagnosticsResult
 from .settings import get_model_config, load_config
 from .data_prep import prepare_splits, resolve_split_config
 from .frequency import resolve_frequency
+from .models.families import FAMILIES, load_family_class
+from .seasonality import legacy_seasonality
 from .validation import validate_inputs
 from .metrics.error_metrics import (
     compute_metrics, MetricsResult, resolve_metrics_seasonality,
@@ -29,58 +31,20 @@ from .outputs.tables import (
 
 logger = logging.getLogger(__name__)
 
-# Lazy model import map: model name -> (module path, class name)
-_MODEL_IMPORT_MAP = {
-    "prophet_xgb": (".models.prophet_xgb", "ProphetXGBHybridModel"),
-    "neuralprophet": (".models.neuralprophet", "NeuralProphetModel"),
-    "arima": (".models.arima", "ARIMAModel"),
-}
-
-_MODEL_CACHE = {}
-
-
 def _get_available_model_names():
     """Return list of model names whose dependencies can be imported."""
     available = []
-    for name in _MODEL_IMPORT_MAP:
+    for name in FAMILIES:
         try:
-            _get_model_class(name)
+            load_family_class(name)
             available.append(name)
         except ImportError:
             pass
     return available
 
 
-def _get_model_class(model_name):
-    """Import and cache a single model class by name."""
-    if model_name in _MODEL_CACHE:
-        return _MODEL_CACHE[model_name]
-
-    if model_name not in _MODEL_IMPORT_MAP:
-        raise ValueError(
-            f"Unknown model '{model_name}'. "
-            f"Known models: {list(_MODEL_IMPORT_MAP.keys())}"
-        )
-
-    module_path, class_name = _MODEL_IMPORT_MAP[model_name]
-    try:
-        import importlib
-        mod = importlib.import_module(module_path, package=__package__)
-        cls = getattr(mod, class_name)
-    except ImportError as e:
-        raise ImportError(
-            f"Model '{model_name}' is not available because a required "
-            f"dependency could not be imported: {e}. "
-            f"Check that all dependencies for this model are installed."
-        ) from e
-
-    _MODEL_CACHE[model_name] = cls
-    return cls
-
-
-def _get_model(model_name, params):
-    cls = _get_model_class(model_name)
-    return cls(params=params)
+def _get_model(model_name, params, seasonality):
+    return load_family_class(model_name)(params=params, seasonality=seasonality)
 
 
 @dataclass
@@ -181,7 +145,6 @@ def run_single_its(
     date_col=None,
     covariate_cols=None,
     model_name="prophet_xgb",
-    config_path=None,
     config_overrides=None,
     output_dir=None,
     seed=42,
@@ -203,8 +166,6 @@ def run_single_its(
         Covariate column names. Defaults to config value.
     model_name : str
         Model to use. One of: prophet_xgb, neuralprophet, arima.
-    config_path : str or Path, optional
-        Path to custom YAML config.
     config_overrides : dict, optional
         Runtime config overrides.
     output_dir : str or Path, optional
@@ -217,7 +178,7 @@ def run_single_its(
     PipelineResult
     """
     # 1. Load config
-    config = load_config(config_path, config_overrides)
+    config = load_config(config_overrides)
     date_col = date_col or config["data"]["date_col"]
     target_col = target_col or config["data"]["target_col"]
     covariate_cols = covariate_cols if covariate_cols is not None else config["data"]["covariate_cols"]
@@ -317,14 +278,17 @@ def run_single_its(
         series_freq=series_freq,
     )
 
-    # 3. Instantiate model
+    # 3. Instantiate model. The old path has no declaration: it derives one
+    # from its config against the training window (spec_P11.04.02 4.7).
     model_params = get_model_config(config, model_name)
     if model_name == "neuralprophet":
         # freq comes from the resolved series frequency, never from user
         # config: a declared value cannot disagree with the data (#52).
         model_params = dict(model_params)
         model_params["freq"] = series_freq.alias
-    model = _get_model(model_name, model_params)
+    seasonality = legacy_seasonality(model_name, model_params, splits.train_df,
+                                     series_freq, date_col, target_col)
+    model = _get_model(model_name, model_params, seasonality)
 
     # 3b. Warn about long-horizon ARIMA forecasts (B5). The horizon is a
     # CALENDAR span, measured from the post-event dates themselves: counting

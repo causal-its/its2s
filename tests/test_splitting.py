@@ -271,7 +271,7 @@ class TestResolveSplitConfig:
             resolve_split_config({old: 1})
 
     def test_default_config_has_no_family_keys(self):
-        # The shipped params.yaml must not pre-set window keys for any
+        # The shipped default config must not pre-set window keys for any
         # family, or the foreign-key check would make the other families
         # unreachable through configuration.
         from its2s.data_prep import _METHOD_ARGS, resolve_split_config

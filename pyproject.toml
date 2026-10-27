@@ -19,7 +19,6 @@ dependencies = [
     "xgboost>=2.0",
     "setuptools>=68.0,<71",
     "matplotlib>=3.7",
-    "pyyaml>=6.0",
     "joblib>=1.3",
     "xxhash>=3.0",
     "openpyxl>=3.1",
@@ -48,8 +47,3 @@ markers = ["slow: long-running statistical validation tests"]
 
 [tool.setuptools.packages.find]
 include = ["its2s*"]
-
-# Ship the default YAML next to the package; otherwise pip installs lack
-# params.yaml and load_config() raises FileNotFoundError outside an editable install.
-[tool.setuptools.package-data]
-its2s = ["params.yaml"]

@@ -8,9 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from its2s.models.families import FAMILIES
 from its2s.tuning import (
     TuningResult,
-    _SEARCH_SPACES,
     _sample_lhs,
     _unflatten_params,
     tune_model,
@@ -37,13 +37,13 @@ def short_daily_series():
 
 class TestSampleLhs:
     def test_shape(self):
-        space = _SEARCH_SPACES["arima"]
+        space = FAMILIES["arima"].search_space
         trials = _sample_lhs(space, 10, seed=0)
         assert len(trials) == 10
         assert all(set(t.keys()) == set(space.keys()) for t in trials)
 
     def test_bounds_respected(self):
-        for model_name, space in _SEARCH_SPACES.items():
+        for model_name, space in ((n, f.search_space) for n, f in FAMILIES.items()):
             trials = _sample_lhs(space, 20, seed=42)
             for trial in trials:
                 for key, (low, high, dtype, scale) in space.items():
@@ -52,7 +52,7 @@ class TestSampleLhs:
                     assert val <= high, f"{model_name}.{key}: {val} > {high}"
 
     def test_int_dtype_produces_integers(self):
-        space = _SEARCH_SPACES["arima"]
+        space = FAMILIES["arima"].search_space
         trials = _sample_lhs(space, 20, seed=1)
         for trial in trials:
             for key, (_, _, dtype, _) in space.items():
@@ -70,14 +70,14 @@ class TestSampleLhs:
         assert np.median(vals) < 0.1, "log-scale median should be well below linear midpoint"
 
     def test_reproducible_with_same_seed(self):
-        space = _SEARCH_SPACES["prophet_xgb"]
+        space = FAMILIES["prophet_xgb"].search_space
         t1 = _sample_lhs(space, 10, seed=99)
         t2 = _sample_lhs(space, 10, seed=99)
         for a, b in zip(t1, t2):
             assert a == b
 
     def test_different_seeds_differ(self):
-        space = _SEARCH_SPACES["arima"]
+        space = FAMILIES["arima"].search_space
         t1 = _sample_lhs(space, 10, seed=1)
         t2 = _sample_lhs(space, 10, seed=2)
         # At least one param in at least one trial should differ
@@ -320,7 +320,7 @@ class TestTuneModel:
 
 
 # ---------------------------------------------------------------------------
-# Tuning section in params.yaml
+# Tuning section of the shipped default config
 # ---------------------------------------------------------------------------
 
 class TestTuningConfig:
@@ -378,7 +378,7 @@ class TestTuningConfig:
             get_tuning_config(cfg)
 
     def test_observations_method_reachable_via_config(self):
-        # Regression: the shipped params.yaml must not pre-set pct keys, or
+        # Regression: the shipped default config must not pre-set pct keys, or
         # the cross-method check false-positives on defaults the user never
         # wrote and split_method 'observations' becomes unreachable through
         # configuration.

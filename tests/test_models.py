@@ -20,6 +20,7 @@ from conftest import (
     _has_neuralprophet,
     _run_quiet,
     collect_model_params,
+    declared,
     make_constant_series,
     make_count_series,
     make_daily_series,
@@ -191,8 +192,8 @@ class TestModelBootstrap:
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1002)
         splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
-        model = ARIMAModel(params={"seasonal": False, "m": 1, "stepwise": True,
-                                   "suppress_warnings": True})
+        model = ARIMAModel(params={"stepwise": True, "suppress_warnings": True},
+                           seasonality=declared("D"))
         model.fit(splits.train_df)
         return model, splits
 
@@ -290,8 +291,8 @@ class TestARIMASpecific:
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1100)
         splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
-        model = ARIMAModel(params={"seasonal": False, "m": 1, "stepwise": True,
-                                   "suppress_warnings": True})
+        model = ARIMAModel(params={"stepwise": True, "suppress_warnings": True},
+                           seasonality=declared("D"))
         model.fit(splits.train_df)
         clone = model.clone_fresh()
         assert clone._fixed_order == model._fixed_order
@@ -303,8 +304,8 @@ class TestARIMASpecific:
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1101)
         splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
-        model = ARIMAModel(params={"seasonal": True, "m": 7, "stepwise": True,
-                                   "suppress_warnings": True})
+        model = ARIMAModel(params={"stepwise": True, "suppress_warnings": True},
+                           seasonality=declared("D", "weekly"))
         model.fit(splits.train_df)
         assert isinstance(model._fixed_seasonal_order, tuple)
         assert len(model._fixed_seasonal_order) == 4
@@ -314,8 +315,8 @@ class TestARIMASpecific:
         from its2s.data_prep import prepare_splits
         df, intv, _, cov_cols = make_series_with_covariates(seed=1102)
         splits = prepare_splits(df, intv, split_method="days", test_days=365, post_event_days=365)
-        model = ARIMAModel(params={"seasonal": True, "m": 7, "stepwise": True,
-                                   "suppress_warnings": True})
+        model = ARIMAModel(params={"stepwise": True, "suppress_warnings": True},
+                           seasonality=declared("D", "weekly"))
         fr = model.fit(splits.train_df, covariate_cols=cov_cols)
         pr = model.predict(splits.full_predict_df, covariate_cols=cov_cols)
         assert len(fr.fitted_values) == len(splits.train_df)
@@ -362,8 +363,11 @@ class TestARIMASpecific:
 # ARIMA seasonal period m "auto" resolution (GH #59, D-059)
 # ===================================================================
 class TestARIMASeasonalityAuto:
-    """The shipped m default resolves from the series frequency with a loud
-    non-seasonal fallback; explicit values are honored, never substituted."""
+    """The old path's m default resolves from the series frequency with a loud
+    non-seasonal fallback; explicit values are honored, never substituted.
+    Since P11.04.02 the resolution happens in the old path's declaration
+    (its2s.seasonality.legacy_seasonality), and the class fits what it is
+    given."""
 
     @staticmethod
     def _freq(alias):
@@ -372,10 +376,13 @@ class TestARIMASeasonalityAuto:
 
     @staticmethod
     def _fit_with_stub(monkeypatch, df, params):
-        """Fit an ARIMAModel with pm.auto_arima stubbed out; return the
-        kwargs the stub captured (so tests assert on the m actually passed
-        without paying for a real stepwise search)."""
+        """Derive the old path's declaration from params on df, fit an
+        ARIMAModel with pm.auto_arima stubbed out, and return the kwargs the
+        stub captured (so tests assert on the m actually passed without
+        paying for a real stepwise search)."""
         import its2s.models.arima as arima_mod
+        from its2s.frequency import resolve_frequency
+        from its2s.seasonality import legacy_seasonality
 
         captured = {}
         n = len(df)
@@ -392,36 +399,38 @@ class TestARIMASeasonalityAuto:
             return _Stub()
 
         monkeypatch.setattr(arima_mod.pm, "auto_arima", fake_auto_arima)
-        model = arima_mod.ARIMAModel(params=params)
+        seasonality = legacy_seasonality("arima", params, df,
+                                         resolve_frequency(df["ds"]))
+        model = arima_mod.ARIMAModel(params=params, seasonality=seasonality)
         model.fit(df)
         return captured
 
     # -- resolver unit tests -------------------------------------------------
 
     def test_auto_daily_resolves_7(self):
-        from its2s.models.arima import resolve_arima_m
+        from its2s.seasonality import resolve_arima_m
         assert resolve_arima_m("auto", n_train=400,
                                series_freq=self._freq("D")) == 7
 
     def test_auto_weekly_resolves_52(self):
-        from its2s.models.arima import resolve_arima_m
+        from its2s.seasonality import resolve_arima_m
         assert resolve_arima_m("auto", n_train=200,
                                series_freq=self._freq("W-SUN")) == 52
 
     def test_auto_monthly_resolves_12(self):
-        from its2s.models.arima import resolve_arima_m
+        from its2s.seasonality import resolve_arima_m
         assert resolve_arima_m("auto", n_train=60,
                                series_freq=self._freq("MS")) == 12
 
     def test_auto_unmapped_frequency_falls_back_to_1_with_warning(self):
-        from its2s.models.arima import resolve_arima_m
+        from its2s.seasonality import resolve_arima_m
         with pytest.warns(UserWarning, match="no dominant seasonal period"):
             m = resolve_arima_m("auto", n_train=100,
                                 series_freq=self._freq("QS-JAN"))
         assert m == 1
 
     def test_auto_short_train_falls_back_to_1_with_warning(self):
-        from its2s.models.arima import resolve_arima_m
+        from its2s.seasonality import resolve_arima_m
         with pytest.warns(UserWarning, match=r"n_train >= 2\*m"):
             m = resolve_arima_m("auto", n_train=80,
                                 series_freq=self._freq("W-SUN"))
@@ -430,19 +439,19 @@ class TestARIMASeasonalityAuto:
     def test_explicit_failing_guard_warns_and_honors(self):
         # The deliberate deviation from resolve_metrics_seasonality, which
         # raises here: a model spec is advisory-warned, never substituted.
-        from its2s.models.arima import resolve_arima_m
+        from its2s.seasonality import resolve_arima_m
         with pytest.warns(UserWarning, match="honored"):
             m = resolve_arima_m(52, n_train=60)
         assert m == 52
 
     def test_explicit_passing_guard_is_silent(self):
-        from its2s.models.arima import resolve_arima_m
+        from its2s.seasonality import resolve_arima_m
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             assert resolve_arima_m(7, n_train=400) == 7
 
     def test_m_below_1_raises(self):
-        from its2s.models.arima import resolve_arima_m
+        from its2s.seasonality import resolve_arima_m
         with pytest.raises(ValueError, match="must be >= 1"):
             resolve_arima_m(0, n_train=400)
 
@@ -473,23 +482,20 @@ class TestARIMASeasonalityAuto:
             captured = self._fit_with_stub(monkeypatch, df, params={"m": 7})
         assert captured["m"] == 7
 
-    def test_fit_auto_irregular_dates_warns_and_falls_back_to_m1(
-            self, monkeypatch):
-        dates = pd.to_datetime(
-            ["2022-01-01", "2022-01-02", "2022-01-05", "2022-01-11",
-             "2022-02-01", "2022-02-03", "2022-03-01", "2022-04-01"])
-        df = pd.DataFrame({"ds": dates, "y": np.ones(len(dates))})
-        with pytest.warns(UserWarning, match="could not resolve"):
-            captured = self._fit_with_stub(monkeypatch, df, params={})
-        assert captured["m"] == 1
+    def test_class_without_a_declaration_raises(self):
+        # Replaces the standalone irregular-dates fallback: since P11.04.02 a
+        # family never resolves its own m, so there is nothing to fall back
+        # from; the declaration is required at construction (spec 4.3).
+        from its2s.models.arima import ARIMAModel
+        with pytest.raises(TypeError, match="needs a Seasonality"):
+            ARIMAModel(params={}, seasonality=None)
 
     def test_fit_seasonal_false_skips_resolution_silently(self, monkeypatch):
-        # Irregular dates would warn on the auto path; with the seasonal
-        # search off, m is inert and no resolution (or warning) happens.
-        dates = pd.to_datetime(
-            ["2022-01-01", "2022-01-02", "2022-01-05", "2022-01-11",
-             "2022-02-01", "2022-02-03", "2022-03-01", "2022-04-01"])
-        df = pd.DataFrame({"ds": dates, "y": np.ones(len(dates))})
+        # With the seasonal search off, m is inert: no resolution (and so no
+        # warning) happens, even on a grid whose frequency has no mapping.
+        df = pd.DataFrame({"ds": pd.date_range("2022-01-01", periods=40,
+                                               freq="QS"),
+                           "y": np.ones(40)})
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             captured = self._fit_with_stub(monkeypatch, df,
@@ -511,7 +517,7 @@ class TestProphetXGBSpecific:
         from xgboost import XGBRegressor
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1200)
         splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
-        model = ProphetXGBHybridModel(params={})
+        model = ProphetXGBHybridModel(params={}, seasonality=declared("D", "weekly"))
         _run_quiet(model.fit, splits.train_df)
         assert isinstance(model._prophet, Prophet)
         assert isinstance(model._xgb, XGBRegressor)
@@ -521,7 +527,7 @@ class TestProphetXGBSpecific:
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1201)
         splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
-        model = ProphetXGBHybridModel(params={})
+        model = ProphetXGBHybridModel(params={}, seasonality=declared("D", "weekly"))
         _run_quiet(model.fit, splits.train_df)
         clone = model.clone_fresh()
         assert clone._prophet is None
@@ -533,7 +539,7 @@ class TestProphetXGBSpecific:
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=1202)
         splits = prepare_splits(df, intv, split_method="days", test_days=180, post_event_days=180)
-        model = ProphetXGBHybridModel(params={})
+        model = ProphetXGBHybridModel(params={}, seasonality=declared("D", "weekly"))
         fr = _run_quiet(model.fit, splits.train_df)
         assert abs(np.mean(fr.residuals)) < 5.0
 
@@ -542,7 +548,7 @@ class TestProphetXGBSpecific:
         from its2s.data_prep import prepare_splits
         df, intv, _, cov_cols = make_series_with_covariates(seed=1203)
         splits = prepare_splits(df, intv, split_method="days", test_days=365, post_event_days=365)
-        model = ProphetXGBHybridModel(params={})
+        model = ProphetXGBHybridModel(params={}, seasonality=declared("D", "weekly"))
         fr = _run_quiet(model.fit, splits.train_df, covariate_cols=cov_cols)
         pr = _run_quiet(model.predict, splits.full_predict_df, covariate_cols=cov_cols)
         assert len(fr.fitted_values) == len(splits.train_df)
@@ -552,6 +558,22 @@ class TestProphetXGBSpecific:
 # ===================================================================
 # Prophet weekly_seasonality "auto" default (GH #60)
 # ===================================================================
+def _fit_with_old_default(train_df):
+    """Fit prophet_xgb as the old path does: its shipped "auto" config turned
+    into a declaration on train_df (legacy_seasonality), then the fit. The
+    auto rules and their warnings live in that declaration since P11.04.02."""
+    from its2s.frequency import resolve_frequency
+    from its2s.models.prophet_xgb import ProphetXGBHybridModel
+    from its2s.seasonality import legacy_seasonality
+    from its2s.settings import load_config
+    params = load_config()["models"]["prophet_xgb"]
+    seasonality = legacy_seasonality("prophet_xgb", params, train_df,
+                                     resolve_frequency(train_df["ds"]))
+    model = ProphetXGBHybridModel(params=params, seasonality=seasonality)
+    model.fit(train_df)
+    return model
+
+
 class TestProphetWeeklySeasonalityAuto:
     """The shipped weekly_seasonality default defers to Prophet's spacing rule.
 
@@ -561,24 +583,17 @@ class TestProphetWeeklySeasonalityAuto:
     (fourier_order 3), keeping daily runs bit-identical.
     """
 
-    @staticmethod
-    def _make_model(model_name):
-        from its2s.models.prophet_xgb import ProphetXGBHybridModel
-        return ProphetXGBHybridModel(params={})
-
     @pytest.mark.parametrize("model_name", ["prophet_xgb"])
     def test_weekly_disabled_on_weekly_grid(self, model_name):
         df, _, _ = make_weekly_series(seed=1500)
-        model = self._make_model(model_name)
-        _run_quiet(model.fit, df.iloc[:156])
+        model = _run_quiet(_fit_with_old_default, df.iloc[:156])
         assert "weekly" not in model._prophet.seasonalities
         assert "yearly" in model._prophet.seasonalities
 
     @pytest.mark.parametrize("model_name", ["prophet_xgb"])
     def test_weekly_enabled_on_daily_grid(self, model_name):
         df, _, _ = make_short_series(n_pre=180, n_post=30, seed=1501)
-        model = self._make_model(model_name)
-        _run_quiet(model.fit, df.iloc[:180])
+        model = _run_quiet(_fit_with_old_default, df.iloc[:180])
         assert model._prophet.seasonalities["weekly"]["fourier_order"] == 3
 
 
@@ -598,17 +613,15 @@ class TestProphetYearlySeasonalityAuto:
     @pytest.mark.parametrize("model_name", ["prophet_xgb"])
     def test_yearly_disabled_with_warning_on_short_history(self, model_name):
         df, _, _ = make_short_series(n_pre=180, n_post=30, seed=1502)
-        model = TestProphetWeeklySeasonalityAuto._make_model(model_name)
         with pytest.warns(UserWarning, match="yearly_seasonality='auto'"):
-            model.fit(df.iloc[:180])
+            model = _fit_with_old_default(df.iloc[:180])
         assert "yearly" not in model._prophet.seasonalities
 
     @pytest.mark.parametrize("model_name", ["prophet_xgb"])
     def test_yearly_enabled_with_warning_on_long_history(self, model_name):
         df, _, _ = make_daily_series(n_pre=800, n_post=30, seed=1503)
-        model = TestProphetWeeklySeasonalityAuto._make_model(model_name)
         with pytest.warns(UserWarning, match="ENABLED"):
-            model.fit(df.iloc[:800])
+            model = _fit_with_old_default(df.iloc[:800])
         assert model._prophet.seasonalities["yearly"]["fourier_order"] == 10
 
     def test_report_helper_rule_boundaries(self):
@@ -617,7 +630,7 @@ class TestProphetYearlySeasonalityAuto:
         Note periods=N spans N-1 days: that off-by-one is exactly what put the
         730-row effect-recovery fixture one day under the threshold (D-079).
         """
-        from its2s.models.base import report_auto_yearly_resolution
+        from its2s.seasonality import report_auto_yearly_resolution
         short = pd.DataFrame({
             "ds": pd.date_range("2022-01-01", periods=700, freq="D"),
             "y": np.ones(700)})
@@ -643,19 +656,16 @@ class TestProphetYearlySeasonalityAuto:
         difference in the estimate is, which would enshrine the behaviour
         rather than expose it.
         """
-        model_at = TestProphetWeeklySeasonalityAuto._make_model("prophet_xgb")
-        model_over = TestProphetWeeklySeasonalityAuto._make_model("prophet_xgb")
-
         # 730 daily rows span 729 days: one day UNDER the threshold.
         df_under, _, _ = make_daily_series(n_pre=730, n_post=30, seed=1504)
         with pytest.warns(UserWarning, match="spans 729 days.*DISABLED"):
-            model_at.fit(df_under.iloc[:730])
+            model_at = _fit_with_old_default(df_under.iloc[:730])
         assert "yearly" not in model_at._prophet.seasonalities
 
         # 731 daily rows span 730 days: exactly AT the threshold.
         df_over, _, _ = make_daily_series(n_pre=731, n_post=30, seed=1504)
         with pytest.warns(UserWarning, match="spans 730 days.*ENABLED"):
-            model_over.fit(df_over.iloc[:731])
+            model_over = _fit_with_old_default(df_over.iloc[:731])
         assert model_over._prophet.seasonalities["yearly"]["fourier_order"] == 10
 
 
@@ -668,24 +678,26 @@ class TestNeuralProphetSpecific:
 
     def test_model_state_none_before_fit(self):
         from its2s.models.neuralprophet import NeuralProphetModel
-        model = NeuralProphetModel(params=_NP_FAST_PARAMS)
+        model = NeuralProphetModel(params=_NP_FAST_PARAMS, seasonality=declared("D"))
         assert model._model is None
         assert model._fit_result is None
 
-    def test_seasonality_auto_reaches_library(self):
-        """GH #60, D-057: the default "auto" is handed to NeuralProphet
-        unresolved; the library applies the same rules as Prophet at fit time."""
+    def test_declaration_reaches_library(self):
+        """Replaces "auto reaches the library unresolved" (GH #60, D-057): since
+        P11.04.02 the declaration fixes every fit (GH #74), so the library is
+        handed exactly the declared cycles and never "auto"."""
         from its2s.models.neuralprophet import NeuralProphetModel
-        np_model = NeuralProphetModel(params={})._build_model()
-        assert np_model.config_seasonality.periods["weekly"].arg == "auto"
-        assert np_model.config_seasonality.periods["yearly"].arg == "auto"
+        np_model = NeuralProphetModel(
+            params={}, seasonality=declared("D", "weekly"))._build_model()
+        assert np_model.config_seasonality.periods["weekly"].arg is True
+        assert np_model.config_seasonality.periods["yearly"].arg is False
 
     def test_clone_clears_model_attribute(self):
         from its2s.models.neuralprophet import NeuralProphetModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1400)
         splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
-        model = NeuralProphetModel(params=_NP_FAST_PARAMS)
+        model = NeuralProphetModel(params=_NP_FAST_PARAMS, seasonality=declared("D"))
         _run_quiet(model.fit, splits.train_df)
         clone = model.clone_fresh()
         assert clone._model is None
@@ -697,7 +709,7 @@ class TestNeuralProphetSpecific:
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1401)
         splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
-        model = NeuralProphetModel(params=_NP_FAST_PARAMS)
+        model = NeuralProphetModel(params=_NP_FAST_PARAMS, seasonality=declared("D"))
         fr = _run_quiet(model.fit, splits.train_df)
         finite_mask = np.isfinite(fr.residuals)
         n_lags = _NP_FAST_PARAMS["n_lags"]
@@ -710,7 +722,7 @@ class TestNeuralProphetSpecific:
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1402)
         splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
-        model = NeuralProphetModel(params=_NP_FAST_PARAMS)
+        model = NeuralProphetModel(params=_NP_FAST_PARAMS, seasonality=declared("D"))
         fr = _run_quiet(model.fit, splits.train_df)
         reconstructed = fr.fitted_values + fr.residuals
         actual = splits.train_df["y"].values
@@ -724,7 +736,7 @@ class TestNeuralProphetSpecific:
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=1403)
         splits = prepare_splits(df, intv, split_method="days", test_days=180, post_event_days=180)
-        model = NeuralProphetModel(params=_NP_FAST_PARAMS)
+        model = NeuralProphetModel(params=_NP_FAST_PARAMS, seasonality=declared("D"))
         fr = _run_quiet(model.fit, splits.train_df)
         assert abs(np.nanmean(fr.residuals)) < 20.0
 
@@ -733,7 +745,7 @@ class TestNeuralProphetSpecific:
         from its2s.data_prep import prepare_splits
         df, intv, _, cov_cols = make_series_with_covariates(seed=1404)
         splits = prepare_splits(df, intv, split_method="days", test_days=365, post_event_days=365)
-        model = NeuralProphetModel(params=_NP_FAST_PARAMS)
+        model = NeuralProphetModel(params=_NP_FAST_PARAMS, seasonality=declared("D"))
         fr = _run_quiet(model.fit, splits.train_df, covariate_cols=cov_cols)
         pr = _run_quiet(model.predict, splits.full_predict_df, covariate_cols=cov_cols)
         assert len(fr.fitted_values) == len(splits.train_df)

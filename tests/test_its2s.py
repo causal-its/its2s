@@ -16,6 +16,7 @@ import pytest
 from conftest import (
     _FAST,
     _run_quiet,
+    declared,
     make_constant_series,
     make_count_series,
     make_daily_series,
@@ -438,8 +439,8 @@ class TestBootstrap:
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
         splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
-        model = ARIMAModel(params={"seasonal": False, "m": 1, "stepwise": True,
-                                   "suppress_warnings": True})
+        model = ARIMAModel(params={"stepwise": True, "suppress_warnings": True},
+                           seasonality=declared("D"))
         model.fit(splits.train_df)
         mbb90 = MovingBlockBootstrap(n_sim=10, block_length=7, ci_level=0.90, n_jobs=1)
         mbb99 = MovingBlockBootstrap(n_sim=10, block_length=7, ci_level=0.99, n_jobs=1)
@@ -455,7 +456,7 @@ class TestBootstrap:
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
         splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
-        model = ARIMAModel(params={})
+        model = ARIMAModel(params={}, seasonality=declared("D"))
         mbb = MovingBlockBootstrap(n_sim=5, block_length=7, n_jobs=1)
         with pytest.raises(ValueError, match="fitted"):
             mbb.generate_cis(model, splits.train_df, splits.full_predict_df, seed=42)
