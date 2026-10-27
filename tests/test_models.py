@@ -63,7 +63,7 @@ _MODEL_NAMES_MARKS = [
 # Config helpers
 # ---------------------------------------------------------------------------
 
-def _e2e_config(model_name, *, test_days=365, holdout_days=365, n_sim=10):
+def _e2e_config(model_name, *, test_days=365, post_event_days=365, n_sim=10):
     """Minimal config_overrides for e2e integration tests.
 
     Sets fast bootstrap params and propagates NeuralProphet fast-training
@@ -72,7 +72,7 @@ def _e2e_config(model_name, *, test_days=365, holdout_days=365, n_sim=10):
     cfg = {
         "bootstrap": {"n_sim": n_sim, "n_jobs": 1},
         "periods": {"split_method": "days",
-                    "test_days": test_days, "holdout_days": holdout_days},
+                    "test_days": test_days, "post_event_days": post_event_days},
     }
     if model_name == "neuralprophet":
         cfg["models"] = {"neuralprophet": _NP_FAST_PARAMS}
@@ -111,7 +111,7 @@ class TestModelContract:
     def train_test_data(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1001)
-        return prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        return prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
 
     @pytest.mark.parametrize("name,cls,params", _MODEL_PARAMS, ids=_MODEL_IDS)
     def test_fit_returns_fit_result(self, name, cls, params, train_test_data):
@@ -190,7 +190,7 @@ class TestModelBootstrap:
         from its2s.models.arima import ARIMAModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1002)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = ARIMAModel(params={"seasonal": False, "m": 1, "stepwise": True,
                                    "suppress_warnings": True})
         model.fit(splits.train_df)
@@ -201,7 +201,7 @@ class TestModelBootstrap:
         from its2s.bootstrap.mbb import MovingBlockBootstrap
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1003)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = cls(params=params)
         _run_quiet(model.fit, splits.train_df)
         mbb = MovingBlockBootstrap(n_sim=5, block_length=7, n_jobs=1)
@@ -218,7 +218,7 @@ class TestModelBootstrap:
         from its2s.bootstrap.mbb import MovingBlockBootstrap
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1004)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = cls(params=params)
         _run_quiet(model.fit, splits.train_df)
         mbb = MovingBlockBootstrap(n_sim=10, block_length=7, n_jobs=1)
@@ -237,7 +237,7 @@ class TestModelBootstrap:
         from its2s.data_prep import prepare_splits
         n_sim = 5
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1005)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = cls(params=params)
         _run_quiet(model.fit, splits.train_df)
         mbb = MovingBlockBootstrap(n_sim=n_sim, block_length=7, n_jobs=1)
@@ -265,7 +265,7 @@ class TestModelBootstrap:
         from its2s.bootstrap.mbb import MovingBlockBootstrap
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = cls(params=params)
         _run_quiet(model.fit, splits.train_df)
         mbb = MovingBlockBootstrap(n_sim=20, block_length=7, n_jobs=1)
@@ -289,7 +289,7 @@ class TestARIMASpecific:
         from its2s.models.arima import ARIMAModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1100)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = ARIMAModel(params={"seasonal": False, "m": 1, "stepwise": True,
                                    "suppress_warnings": True})
         model.fit(splits.train_df)
@@ -302,7 +302,7 @@ class TestARIMASpecific:
         from its2s.models.arima import ARIMAModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1101)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = ARIMAModel(params={"seasonal": True, "m": 7, "stepwise": True,
                                    "suppress_warnings": True})
         model.fit(splits.train_df)
@@ -313,7 +313,7 @@ class TestARIMASpecific:
         from its2s.models.arima import ARIMAModel
         from its2s.data_prep import prepare_splits
         df, intv, _, cov_cols = make_series_with_covariates(seed=1102)
-        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, post_event_days=365)
         model = ARIMAModel(params={"seasonal": True, "m": 7, "stepwise": True,
                                    "suppress_warnings": True})
         fr = model.fit(splits.train_df, covariate_cols=cov_cols)
@@ -328,7 +328,7 @@ class TestARIMASpecific:
                                 config_overrides=_merge(
                                     _FAST,
                                     {"periods": {"split_method": "days",
-                                                 "test_days": 364, "holdout_days": 364},
+                                                 "test_days": 364, "post_event_days": 364},
                                      "models": {"arima": {"m": 52}},
                                      "metrics": {"seasonality": 52}}))
         assert result.model_name == "arima"
@@ -340,7 +340,7 @@ class TestARIMASpecific:
                                 config_overrides=_merge(
                                     _FAST,
                                     {"periods": {"split_method": "days",
-                                                 "test_days": 360, "holdout_days": 360},
+                                                 "test_days": 360, "post_event_days": 360},
                                      "models": {"arima": {"m": 12}},
                                      "metrics": {"seasonality": 12}}))
         assert result.model_name == "arima"
@@ -352,7 +352,7 @@ class TestARIMASpecific:
                                 config_overrides=_merge(
                                     _FAST,
                                     {"periods": {"split_method": "days",
-                                                 "test_days": 360, "holdout_days": 360},
+                                                 "test_days": 360, "post_event_days": 360},
                                      "models": {"arima": {"m": 4, "seasonal": True}},
                                      "metrics": {"seasonality": 4}}))
         assert result.model_name == "arima"
@@ -510,7 +510,7 @@ class TestProphetXGBSpecific:
         from prophet import Prophet
         from xgboost import XGBRegressor
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1200)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = ProphetXGBHybridModel(params={})
         _run_quiet(model.fit, splits.train_df)
         assert isinstance(model._prophet, Prophet)
@@ -520,7 +520,7 @@ class TestProphetXGBSpecific:
         from its2s.models.prophet_xgb import ProphetXGBHybridModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1201)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = ProphetXGBHybridModel(params={})
         _run_quiet(model.fit, splits.train_df)
         clone = model.clone_fresh()
@@ -532,7 +532,7 @@ class TestProphetXGBSpecific:
         from its2s.models.prophet_xgb import ProphetXGBHybridModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=1202)
-        splits = prepare_splits(df, intv, split_method="days", test_days=180, holdout_days=180)
+        splits = prepare_splits(df, intv, split_method="days", test_days=180, post_event_days=180)
         model = ProphetXGBHybridModel(params={})
         fr = _run_quiet(model.fit, splits.train_df)
         assert abs(np.mean(fr.residuals)) < 5.0
@@ -541,7 +541,7 @@ class TestProphetXGBSpecific:
         from its2s.models.prophet_xgb import ProphetXGBHybridModel
         from its2s.data_prep import prepare_splits
         df, intv, _, cov_cols = make_series_with_covariates(seed=1203)
-        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, post_event_days=365)
         model = ProphetXGBHybridModel(params={})
         fr = _run_quiet(model.fit, splits.train_df, covariate_cols=cov_cols)
         pr = _run_quiet(model.predict, splits.full_predict_df, covariate_cols=cov_cols)
@@ -684,7 +684,7 @@ class TestNeuralProphetSpecific:
         from its2s.models.neuralprophet import NeuralProphetModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1400)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = NeuralProphetModel(params=_NP_FAST_PARAMS)
         _run_quiet(model.fit, splits.train_df)
         clone = model.clone_fresh()
@@ -696,7 +696,7 @@ class TestNeuralProphetSpecific:
         from its2s.models.neuralprophet import NeuralProphetModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1401)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = NeuralProphetModel(params=_NP_FAST_PARAMS)
         fr = _run_quiet(model.fit, splits.train_df)
         finite_mask = np.isfinite(fr.residuals)
@@ -709,7 +709,7 @@ class TestNeuralProphetSpecific:
         from its2s.models.neuralprophet import NeuralProphetModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=1402)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = NeuralProphetModel(params=_NP_FAST_PARAMS)
         fr = _run_quiet(model.fit, splits.train_df)
         reconstructed = fr.fitted_values + fr.residuals
@@ -723,7 +723,7 @@ class TestNeuralProphetSpecific:
         from its2s.models.neuralprophet import NeuralProphetModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=730, n_post=180, seed=1403)
-        splits = prepare_splits(df, intv, split_method="days", test_days=180, holdout_days=180)
+        splits = prepare_splits(df, intv, split_method="days", test_days=180, post_event_days=180)
         model = NeuralProphetModel(params=_NP_FAST_PARAMS)
         fr = _run_quiet(model.fit, splits.train_df)
         assert abs(np.nanmean(fr.residuals)) < 20.0
@@ -732,7 +732,7 @@ class TestNeuralProphetSpecific:
         from its2s.models.neuralprophet import NeuralProphetModel
         from its2s.data_prep import prepare_splits
         df, intv, _, cov_cols = make_series_with_covariates(seed=1404)
-        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, post_event_days=365)
         model = NeuralProphetModel(params=_NP_FAST_PARAMS)
         fr = _run_quiet(model.fit, splits.train_df, covariate_cols=cov_cols)
         pr = _run_quiet(model.predict, splits.full_predict_df, covariate_cols=cov_cols)
@@ -761,7 +761,7 @@ class TestModelIntegration:
     def test_e2e_weekly(self, model_name):
         from its2s import run_single_its
         df, intv, _ = make_weekly_series(intervention_effect=5.0, seed=2011)
-        cfg = _e2e_config(model_name, test_days=364, holdout_days=364)
+        cfg = _e2e_config(model_name, test_days=364, post_event_days=364)
         if model_name == "arima":
             cfg = _merge(cfg, _ARIMA_FREQ_EXTRA["weekly"])
         try:
@@ -777,7 +777,7 @@ class TestModelIntegration:
     def test_e2e_monthly(self, model_name):
         from its2s import run_single_its
         df, intv, _ = make_monthly_series(intervention_effect=10.0, seed=2012)
-        cfg = _e2e_config(model_name, test_days=360, holdout_days=360)
+        cfg = _e2e_config(model_name, test_days=360, post_event_days=360)
         if model_name == "arima":
             cfg = _merge(cfg, _ARIMA_FREQ_EXTRA["monthly"])
         try:
@@ -793,7 +793,7 @@ class TestModelIntegration:
     def test_e2e_quarterly(self, model_name):
         from its2s import run_single_its
         df, intv, _ = make_quarterly_series(intervention_effect=15.0, seed=2013)
-        cfg = _e2e_config(model_name, test_days=360, holdout_days=360)
+        cfg = _e2e_config(model_name, test_days=360, post_event_days=360)
         if model_name == "arima":
             cfg = _merge(cfg, _ARIMA_FREQ_EXTRA["quarterly"])
         try:
@@ -830,7 +830,7 @@ class TestModelIntegration:
     def test_e2e_output_files_saved(self, model_name, tmp_path):
         from its2s import run_single_its
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=2016)
-        cfg = _e2e_config(model_name, test_days=30, holdout_days=30)
+        cfg = _e2e_config(model_name, test_days=30, post_event_days=30)
         _run_quiet(run_single_its, df, intv, model_name=model_name,
                    seed=42, output_dir=str(tmp_path), config_overrides=cfg)
         assert (tmp_path / f"{model_name}_counterfactual.png").exists()
@@ -865,7 +865,7 @@ class TestModelRobustness:
     def test_very_short_series(self, model_name):
         from its2s import run_single_its
         df, intv, _ = make_short_series(n_pre=90, n_post=30, seed=3011)
-        cfg = _e2e_config(model_name, test_days=30, holdout_days=30, n_sim=5)
+        cfg = _e2e_config(model_name, test_days=30, post_event_days=30, n_sim=5)
         if model_name == "arima":
             cfg = _merge(cfg, {"models": {"arima": {"seasonal": False, "m": 1}}})
         try:
@@ -1001,11 +1001,11 @@ class TestModelComparison:
         from its2s import run_single_its
         df, intv, _ = make_daily_series(n_pre=365, n_post=90, intervention_effect=10.0,
                                          seed=5010)
-        period_cfg = {"periods": {"test_days": 90, "holdout_days": 90}}
+        period_cfg = {"periods": {"test_days": 90, "post_event_days": 90}}
         for model_name, _, _ in _MODEL_PARAMS:
             cfg = _merge(_FAST, _merge(period_cfg, _e2e_config(model_name,
                                                                 test_days=90,
-                                                                holdout_days=90)))
+                                                                post_event_days=90)))
             result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                                 seed=42, config_overrides=cfg)
             preds = result.bootstrap_result.predicted
@@ -1021,7 +1021,7 @@ class TestModelComparison:
         df, intv, _ = make_daily_series(n_pre=365, n_post=90, intervention_effect=20.0,
                                          seed=5011)
         for model_name, _, _ in _MODEL_PARAMS:
-            cfg = _merge(_FAST, _e2e_config(model_name, test_days=90, holdout_days=90))
+            cfg = _merge(_FAST, _e2e_config(model_name, test_days=90, post_event_days=90))
             result = _run_quiet(run_single_its, df, intv, model_name=model_name,
                                 seed=42, config_overrides=cfg)
             ate = calc_ate_summary(result.excess_table.obs_excess)

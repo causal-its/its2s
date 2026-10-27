@@ -64,11 +64,11 @@ def validate_excess_periods(periods_config):
         _validate_period_keys(pconf)
 
 
-def _period_bounds(pconf, h_dates, holdout_start, holdout_end):
-    """Resolve one sub-period config to (mask, start, end) over the holdout rows.
+def _period_bounds(pconf, post_dates, post_event_start, post_event_end):
+    """Resolve one sub-period config to (mask, start, end) over the post-event rows.
 
     Offsets are unit-explicit: exactly one of the two key families per period.
-    start_offset_days/end_offset_days delimit in calendar time from the holdout
+    start_offset_days/end_offset_days delimit in calendar time from the post-event
     start (inclusive end date); start_offset_obs/end_offset_obs delimit by row
     position (inclusive end index). The two agree only on daily series, which
     is why the unit must be named.
@@ -76,14 +76,14 @@ def _period_bounds(pconf, h_dates, holdout_start, holdout_end):
     name, has_days = _validate_period_keys(pconf)
 
     if has_days:
-        p_start = holdout_start + pd.Timedelta(days=pconf.get("start_offset_days", 0))
+        p_start = post_event_start + pd.Timedelta(days=pconf.get("start_offset_days", 0))
         if pconf.get("end_offset_days") is not None:
-            p_end = holdout_start + pd.Timedelta(days=pconf["end_offset_days"])
+            p_end = post_event_start + pd.Timedelta(days=pconf["end_offset_days"])
         else:
-            p_end = holdout_end
-        return (h_dates >= p_start) & (h_dates <= p_end), p_start, p_end
+            p_end = post_event_end
+        return (post_dates >= p_start) & (post_dates <= p_end), p_start, p_end
 
-    idx = np.arange(len(h_dates))
+    idx = np.arange(len(post_dates))
     start_obs = pconf.get("start_offset_obs") or 0
     end_obs = pconf.get("end_offset_obs")
     mask = idx >= start_obs
@@ -91,7 +91,7 @@ def _period_bounds(pconf, h_dates, holdout_start, holdout_end):
         mask &= idx <= end_obs
     if not mask.any():
         return mask, None, None
-    masked = h_dates[mask]
+    masked = post_dates[mask]
     p_start = masked.min() if hasattr(masked, "min") else masked[0]
     p_end = masked.max() if hasattr(masked, "max") else masked[-1]
     return mask, p_start, p_end
@@ -106,12 +106,12 @@ def calculate_excess(bootstrap_result, intervention_date, periods_config=None,
     bootstrap_result : BootstrapCIResult
         Output of MBB bootstrap.
     intervention_date : pd.Timestamp
-        Intervention date (only holdout dates are used for excess).
+        Intervention date (only post-event dates are used for excess).
     periods_config : list[dict], optional
         Custom sub-periods, each with 'name' plus offsets in exactly one
         unit family: 'start_offset_days'/'end_offset_days' (calendar days
-        from the holdout start, inclusive end) or 'start_offset_obs'/
-        'end_offset_obs' (row counts into the holdout, inclusive end).
+        from the post-event start, inclusive end) or 'start_offset_obs'/
+        'end_offset_obs' (row counts into the post-event window, inclusive end).
     ci_level : float
         Confidence level for CIs.
 
@@ -126,35 +126,35 @@ def calculate_excess(bootstrap_result, intervention_date, periods_config=None,
     dates = pd.to_datetime(bootstrap_result.dates)
     intervention_date = pd.Timestamp(intervention_date)
 
-    # Restrict to holdout (post-intervention)
-    holdout_mask = dates >= intervention_date
-    if not holdout_mask.any():
+    # Restrict to the post-event window
+    post_event_mask = dates >= intervention_date
+    if not post_event_mask.any():
         return ExcessResult(obs_excess=pd.DataFrame(), period_excess=pd.DataFrame())
 
-    h_dates = dates[holdout_mask]
-    h_actual = bootstrap_result.actual[holdout_mask] if bootstrap_result.actual is not None else None
-    h_predicted = bootstrap_result.predicted[holdout_mask]
-    h_pred_matrix = bootstrap_result.pred_matrix[holdout_mask, :]
-    h_conf_lo = bootstrap_result.conf_lo[holdout_mask]
-    h_conf_hi = bootstrap_result.conf_hi[holdout_mask]
+    post_dates = dates[post_event_mask]
+    post_actual = bootstrap_result.actual[post_event_mask] if bootstrap_result.actual is not None else None
+    post_predicted = bootstrap_result.predicted[post_event_mask]
+    post_pred_matrix = bootstrap_result.pred_matrix[post_event_mask, :]
+    post_conf_lo = bootstrap_result.conf_lo[post_event_mask]
+    post_conf_hi = bootstrap_result.conf_hi[post_event_mask]
 
     # Per-observation excess
     obs_rows = []
-    for i in range(len(h_dates)):
-        observed = float(h_actual[i]) if h_actual is not None else np.nan
-        expected = float(h_predicted[i])
+    for i in range(len(post_dates)):
+        observed = float(post_actual[i]) if post_actual is not None else np.nan
+        expected = float(post_predicted[i])
         excess = observed - expected
 
         # Excess CI from bootstrap: observed - sim_predicted for each sim
-        if h_actual is not None:
-            excess_sims = observed - h_pred_matrix[i, :]
+        if post_actual is not None:
+            excess_sims = observed - post_pred_matrix[i, :]
             excess_lo = float(np.nanpercentile(excess_sims, 100 * lo_q))
             excess_hi = float(np.nanpercentile(excess_sims, 100 * hi_q))
         else:
             excess_lo = excess_hi = np.nan
 
         excess_pct = (excess / expected * 100) if expected != 0 else np.nan
-        if h_actual is not None and expected != 0:
+        if post_actual is not None and expected != 0:
             pct_sims = excess_sims / expected * 100
             excess_pct_lo = float(np.nanpercentile(pct_sims, 100 * lo_q))
             excess_pct_hi = float(np.nanpercentile(pct_sims, 100 * hi_q))
@@ -162,11 +162,11 @@ def calculate_excess(bootstrap_result, intervention_date, periods_config=None,
             excess_pct_lo = excess_pct_hi = np.nan
 
         obs_rows.append({
-            "date": h_dates.iloc[i] if hasattr(h_dates, "iloc") else h_dates[i],
+            "date": post_dates.iloc[i] if hasattr(post_dates, "iloc") else post_dates[i],
             "observed": observed,
             "expected": expected,
-            "expected_ci_lo": float(h_conf_lo[i]),
-            "expected_ci_hi": float(h_conf_hi[i]),
+            "expected_ci_lo": float(post_conf_lo[i]),
+            "expected_ci_hi": float(post_conf_hi[i]),
             "excess": excess,
             "excess_ci_lo": excess_lo,
             "excess_ci_hi": excess_hi,
@@ -180,24 +180,24 @@ def calculate_excess(bootstrap_result, intervention_date, periods_config=None,
     # Period-level excess
     period_rows = []
 
-    # Default: full holdout period
-    all_periods = [{"name": "Full holdout",
+    # Default: the full post-event window
+    all_periods = [{"name": "Full post-event",
                     "start_offset_obs": 0, "end_offset_obs": None}]
     if periods_config:
         all_periods.extend(periods_config)
 
-    holdout_start = h_dates.min() if hasattr(h_dates, "min") else h_dates[0]
-    holdout_end = h_dates.max() if hasattr(h_dates, "max") else h_dates[-1]
+    post_event_start = post_dates.min() if hasattr(post_dates, "min") else post_dates[0]
+    post_event_end = post_dates.max() if hasattr(post_dates, "max") else post_dates[-1]
 
     for pconf in all_periods:
         p_mask, p_start, p_end = _period_bounds(
-            pconf, h_dates, holdout_start, holdout_end)
+            pconf, post_dates, post_event_start, post_event_end)
         if not p_mask.any():
             continue
 
-        p_actual = h_actual[p_mask] if h_actual is not None else None
-        p_predicted = h_predicted[p_mask]
-        p_pred_matrix = h_pred_matrix[p_mask, :]
+        p_actual = post_actual[p_mask] if post_actual is not None else None
+        p_predicted = post_predicted[p_mask]
+        p_pred_matrix = post_pred_matrix[p_mask, :]
 
         total_observed = float(np.nansum(p_actual)) if p_actual is not None else np.nan
         total_expected = float(np.nansum(p_predicted))
@@ -234,7 +234,7 @@ def calculate_excess(bootstrap_result, intervention_date, periods_config=None,
 def calc_ate_summary(excess_result):
     """Calculate Average Treatment Effect summary from excess results.
 
-    CIs are derived from the period-level "Full holdout" row, which
+    CIs are derived from the period-level "Full post-event" row, which
     computes total excess per bootstrap simulation and then takes
     percentiles. This correctly accounts for temporal correlation in
     bootstrap predictions (unlike summing independent per-observation CIs).
@@ -265,12 +265,12 @@ def calc_ate_summary(excess_result):
     total_excess = obs_excess["excess"].sum()
     mean_per_obs = total_excess / n
 
-    # Try to get CIs from the period-level "Full holdout" row, which
+    # Try to get CIs from the period-level "Full post-event" row, which
     # sums per-simulation predictions then takes percentiles (correct).
-    fullhold = period_excess[period_excess["period"] == "Full holdout"] if not period_excess.empty else pd.DataFrame()
+    full_post_row = period_excess[period_excess["period"] == "Full post-event"] if not period_excess.empty else pd.DataFrame()
 
-    if not fullhold.empty:
-        row = fullhold.iloc[0]
+    if not full_post_row.empty:
+        row = full_post_row.iloc[0]
         total_ci_lo = float(row["excess_ci_lo"])
         total_ci_hi = float(row["excess_ci_hi"])
     else:

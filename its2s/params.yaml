@@ -20,18 +20,18 @@ data:
 periods:
   split_method: percent       # "percent" (default) | "days" | "observations"
   # Window sizes default in code per family (prepare_splits): percent
-  # test_pct 0.20 / holdout_pct 1.0, days test_days 365 / holdout_days 365,
+  # test_pct 0.20 / post_event_pct 1.0, days test_days 365 / post_event_days 365,
   # observations required with no defaults. They are NOT set here: only the
   # family matching split_method may appear in config, and keys from another
   # family raise instead of being silently ignored (GH #28, #54), so defaults
   # for every family in this file would make the non-default methods
   # unreachable. Set keys for the chosen family only, e.g.:
   # test_pct: 0.20            # percent: fraction of pre-intervention observations
-  # holdout_pct: 1.0          # percent: fraction of post-intervention observations
+  # post_event_pct: 1.0          # percent: fraction of post-intervention observations
   # test_days: 365            # days: calendar days, whatever the series frequency
-  # holdout_days: 365         # days: calendar days, whatever the series frequency
+  # post_event_days: 365         # days: calendar days, whatever the series frequency
   # test_obs: 52              # observations: row counts; required, no defaults
-  # holdout_obs: 52
+  # post_event_obs: 52
   min_test_obs: 30            # warn when the realized test window has fewer observations (0 disables); GH #29
 
 models:
@@ -97,13 +97,13 @@ output:
   format: "csv"
   plot_dpi: 150
   plot_figsize: [14, 6]
-  # Sequence overrides map to: fit, counterfactual/CI, intervention, holdout.
+  # Sequence overrides map to: fit, counterfactual/CI, intervention, post_event.
   # Dict overrides may also include observed.
   plot_colors:
     fit: "#2166AC"
     counterfactual: "#B2182B"
     intervention: "#4DAF4A"
-    holdout: "#FEE08B"
+    post_event: "#FEE08B"
     observed: "#333333"
   plot_font_sizes:
     title: 22
@@ -116,9 +116,9 @@ parallel:
 
 excess_periods: []
 # Example excess_periods. Offsets are unit-explicit: delimit each period with
-# EITHER start_offset_days/end_offset_days (calendar days from the holdout
+# EITHER start_offset_days/end_offset_days (calendar days from the post-event
 # start, inclusive end) OR start_offset_obs/end_offset_obs (observation
-# counts into the holdout, inclusive end). Mixing the two families in one
+# counts into the post-event window, inclusive end). Mixing the two families in one
 # period raises; the legacy start_offset/end_offset keys are rejected.
 # - name: "First 30 days"
 #   start_offset_days: 0
@@ -126,7 +126,7 @@ excess_periods: []
 # - name: "First 4 observations"
 #   start_offset_obs: 0
 #   end_offset_obs: 3
-# - name: "Full holdout"
+# - name: "Full post-event"
 #   start_offset_obs: 0
 #   end_offset_obs: null
 

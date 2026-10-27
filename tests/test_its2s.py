@@ -47,8 +47,8 @@ class TestSettings:
         # (prepare_splits), because pre-set keys for every family would
         # false-positive the cross-method check (GH #28, #54) and make the
         # non-default methods unreachable through configuration.
-        for key in ("test_pct", "holdout_pct", "test_days", "holdout_days",
-                    "test_obs", "holdout_obs"):
+        for key in ("test_pct", "post_event_pct", "test_days", "post_event_days",
+                    "test_obs", "post_event_obs"):
             assert key not in default_config["periods"]
         assert default_config["periods"]["split_method"] == "percent"
         assert default_config["bootstrap"]["n_sim"] == 1000
@@ -108,33 +108,33 @@ class TestDataPrep:
     def test_prepare_splits_basic(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
-        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, post_event_days=365)
         train_max = splits.train_df["ds"].max()
         test_min = splits.test_df["ds"].min()
         test_max = splits.test_df["ds"].max()
-        holdout_min = splits.holdout_df["ds"].min()
+        post_event_min = splits.post_event_df["ds"].min()
         assert train_max < test_min, "Train and test should not overlap"
-        assert test_max < holdout_min, "Test and holdout should not overlap"
+        assert test_max < post_event_min, "Test and post-event windows should not overlap"
 
     def test_prepare_splits_lengths(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
-        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, post_event_days=365)
         assert len(splits.train_df) == 730  # 1095 - 365
         assert len(splits.test_df) == 365
-        assert len(splits.holdout_df) == 365
+        assert len(splits.post_event_df) == 365
 
     def test_prepare_splits_full_predict(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
-        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
-        expected_len = len(splits.test_df) + len(splits.holdout_df)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, post_event_days=365)
+        expected_len = len(splits.test_df) + len(splits.post_event_df)
         assert len(splits.full_predict_df) == expected_len
 
     def test_prepare_splits_string_date(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_daily_series(n_pre=1095, n_post=365)
-        splits = prepare_splits(df, str(intv), split_method="days", test_days=365, holdout_days=365)
+        splits = prepare_splits(df, str(intv), split_method="days", test_days=365, post_event_days=365)
         assert isinstance(splits.intervention_date, pd.Timestamp)
 
     def test_prepare_splits_custom_date_col(self):
@@ -143,26 +143,26 @@ class TestDataPrep:
         df = df.rename(columns={"ds": "date"})
         splits = prepare_splits(df, intv, date_col="date",
                                 split_method="days",
-                                test_days=365, holdout_days=365)
+                                test_days=365, post_event_days=365)
         assert "date" in splits.train_df.columns
 
     def test_prepare_splits_short_series(self):
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=30, n_post=30)
-        splits = prepare_splits(df, intv, split_method="days", test_days=365, holdout_days=365)
+        splits = prepare_splits(df, intv, split_method="days", test_days=365, post_event_days=365)
         assert len(splits.train_df) == 0
 
     def test_prepare_splits_intervention_at_start(self):
         from its2s.data_prep import prepare_splits
         df, intv = make_intervention_at_boundary("start")
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         assert len(splits.train_df) == 0 or len(splits.test_df) == 0
 
     def test_prepare_splits_intervention_at_end(self):
         from its2s.data_prep import prepare_splits
         df, intv = make_intervention_at_boundary("end")
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
-        assert len(splits.holdout_df) <= 1
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
+        assert len(splits.post_event_df) <= 1
 
 
 # ===================================================================
@@ -437,7 +437,7 @@ class TestBootstrap:
         from its2s.models.arima import ARIMAModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = ARIMAModel(params={"seasonal": False, "m": 1, "stepwise": True,
                                    "suppress_warnings": True})
         model.fit(splits.train_df)
@@ -454,7 +454,7 @@ class TestBootstrap:
         from its2s.models.arima import ARIMAModel
         from its2s.data_prep import prepare_splits
         df, intv, _ = make_short_series(n_pre=180, n_post=30, seed=77)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         model = ARIMAModel(params={})
         mbb = MovingBlockBootstrap(n_sim=5, block_length=7, n_jobs=1)
         with pytest.raises(ValueError, match="fitted"):
@@ -527,13 +527,13 @@ class TestExcess:
         mean_excess = result.obs_excess["excess"].mean()
         assert mean_excess > 5.0
 
-    def test_period_excess_full_holdout(self):
+    def test_period_excess_full_post_event(self):
         from its2s.metrics.excess import calculate_excess
         br = make_mock_bootstrap_result()
         intervention_date = pd.Timestamp("2021-01-31")
         result = calculate_excess(br, intervention_date)
         assert len(result.period_excess) >= 1
-        assert "Full holdout" in result.period_excess["period"].values
+        assert "Full post-event" in result.period_excess["period"].values
 
     def test_period_excess_custom_periods_days(self):
         from its2s.metrics.excess import calculate_excess
@@ -619,7 +619,7 @@ class TestExcess:
                     {"name": "Legacy", "start_offset": 0, "end_offset": 30}]},
             )
 
-    def test_excess_no_holdout(self):
+    def test_excess_no_post_event(self):
         from its2s.metrics.excess import calculate_excess
         br = make_mock_bootstrap_result()
         future_date = pd.Timestamp("2025-01-01")
@@ -864,7 +864,7 @@ class TestOutputs:
                 "excess_pct_ci_hi": np.full(10, 15.0),
             }),
             period_excess=pd.DataFrame({
-                "period": ["Full holdout"],
+                "period": ["Full post-event"],
                 "start_date": [pd.Timestamp("2021-01-31")],
                 "end_date": [pd.Timestamp("2021-02-09")],
                 "n_obs": [10],
@@ -891,7 +891,7 @@ class TestOutputs:
         from its2s.data_prep import prepare_splits
         pr, _, _ = self._make_minimal_pipeline_result()
         df, intv, _ = make_short_series(n_pre=60, n_post=30)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         save_path = tmp_path / "test_plot.png"
         plot_counterfactual(pr, splits, save_path=save_path)
         assert save_path.exists()
@@ -903,7 +903,7 @@ class TestOutputs:
         import matplotlib.figure
         pr, _, _ = self._make_minimal_pipeline_result()
         df, intv, _ = make_short_series(n_pre=60, n_post=30)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         fig = plot_counterfactual(pr, splits, save_path=None)
         assert isinstance(fig, matplotlib.figure.Figure)
 
@@ -914,7 +914,7 @@ class TestOutputs:
 
         pr, _, _ = self._make_minimal_pipeline_result()
         df, intv, _ = make_short_series(n_pre=60, n_post=30)
-        splits = prepare_splits(df, intv, split_method="days", test_days=30, holdout_days=30)
+        splits = prepare_splits(df, intv, split_method="days", test_days=30, post_event_days=30)
         config = {
             "output": {
                 "plot_colors": ["#984136", "#c26a7a", "#ecc0a1", "#f0f0e4"],
@@ -1173,7 +1173,7 @@ class TestOutputs:
         from its2s.models.base import FitResult
         df, intv, _ = make_short_series(n_pre=180, n_post=30)
         splits = prepare_splits(df, intv, split_method="days",
-                                test_days=30, holdout_days=30)
+                                test_days=30, post_event_days=30)
         n_train = len(splits.train_df)
         rng = np.random.default_rng(2)
         fr = FitResult(fitted_values=np.ones(n_train),
@@ -1188,7 +1188,7 @@ class TestOutputs:
         from its2s.models.base import FitResult
         df, intv, _ = make_short_series(n_pre=180, n_post=30)
         splits = prepare_splits(df, intv, split_method="days",
-                                test_days=30, holdout_days=30)
+                                test_days=30, post_event_days=30)
         n_train = len(splits.train_df)
         residuals = np.random.default_rng(3).normal(0, 1.0, n_train)
         residuals[:5] = np.nan
@@ -1203,7 +1203,7 @@ class TestOutputs:
         from its2s.models.base import FitResult
         df, intv, _ = make_short_series(n_pre=180, n_post=30)
         splits = prepare_splits(df, intv, split_method="days",
-                                test_days=30, holdout_days=30)
+                                test_days=30, post_event_days=30)
         fr = FitResult(fitted_values=np.ones(10),
                        residuals=np.zeros(10))
         path = tmp_path / "rot_mismatch.png"
@@ -1227,7 +1227,7 @@ class TestOutputs:
         from its2s.models.base import FitResult
         df, intv, _ = make_short_series(n_pre=180, n_post=30)
         splits = prepare_splits(df, intv, split_method="days",
-                                test_days=30, holdout_days=30)
+                                test_days=30, post_event_days=30)
         n_train = len(splits.train_df)
         rng = np.random.default_rng(4)
         fr = FitResult(fitted_values=np.ones(n_train),
@@ -1254,7 +1254,7 @@ class TestOutputs:
         from its2s.models.base import FitResult
         df, intv, _ = make_short_series(n_pre=180, n_post=30)
         splits = prepare_splits(df, intv, split_method="days",
-                                test_days=30, holdout_days=30)
+                                test_days=30, post_event_days=30)
         n_train = len(splits.train_df)
         rng = np.random.default_rng(5)
         fr = FitResult(fitted_values=np.ones(n_train),
@@ -1314,13 +1314,13 @@ class TestBatch:
              "model_name": "arima",
              "config_overrides": {"bootstrap": {"n_sim": 5, "n_jobs": 1},
                                   "periods": {"split_method": "days",
-                                              "test_days": 30, "holdout_days": 30},
+                                              "test_days": 30, "post_event_days": 30},
                                   "models": {"arima": {"seasonal": False, "m": 1}}}},
             {"series_id": "s2", "df": df2, "intervention_date": intv2,
              "model_name": "arima",
              "config_overrides": {"bootstrap": {"n_sim": 5, "n_jobs": 1},
                                   "periods": {"split_method": "days",
-                                              "test_days": 30, "holdout_days": 30},
+                                              "test_days": 30, "post_event_days": 30},
                                   "models": {"arima": {"seasonal": False, "m": 1}}}},
         ]
         results = run_batch(series_list, output_dir=str(tmp_path), n_jobs=1, seed=42)
@@ -1592,9 +1592,9 @@ class TestCrossValidation:
                                          seed=618)
         overrides = dict(self._CV_CFG)
         overrides["periods"] = {"split_method": "days",
-                                "test_days": 180, "holdout_days": 60}
+                                "test_days": 180, "post_event_days": 60}
         boundary = prepare_splits(df, intv, split_method="days",
-                                  test_days=180, holdout_days=60,
+                                  test_days=180, post_event_days=60,
                                   min_test_obs=0).test_df["ds"].min()
         result = time_series_cv(df, intv, model_name="arima",
                                 n_folds=2, test_obs=20, min_train_obs=60,
@@ -1679,7 +1679,7 @@ class TestCompare:
     _COMPARE_CFG = {
         "bootstrap": {"n_sim": 5, "n_jobs": 1},
         "periods": {"split_method": "days",
-                    "test_days": 30, "holdout_days": 30},
+                    "test_days": 30, "post_event_days": 30},
         "models": {"arima": {"seasonal": False, "m": 1, "stepwise": True,
                               "suppress_warnings": True}},
     }

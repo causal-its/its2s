@@ -95,7 +95,7 @@ class PipelineResult:
         Raw fit output from the model, including fitted_values and residuals
         on the training period.
     bootstrap_result : BootstrapCIResult
-        MBB output for the prediction period (test + holdout). Exposes
+        MBB output for the prediction period (test + post-event). Exposes
         dates, actual, predicted, conf_lo, conf_hi, pred_matrix, and
         n_successful.
     metrics_train : MetricsResult
@@ -103,7 +103,7 @@ class PipelineResult:
     metrics_test : MetricsResult
         RMSE, MAE, MAPE, and MASE computed on the test period.
     excess_table : ExcessResult
-        Per-observation excess estimates with CIs for the holdout period.
+        Per-observation excess estimates with CIs for the post-event window.
         Pass to calc_ate_summary() to get total and per-observation ATE
         with CIs.
     config : dict
@@ -155,7 +155,7 @@ class PipelineResult:
                           f"[{total['ci_lo']:.2f}, {total['ci_hi']:.2f}]")
             lines.append(f"Mean ATE per obs: {per_obs['estimate']:.4f} "
                           f"[{per_obs['ci_lo']:.4f}, {per_obs['ci_hi']:.4f}]")
-            lines.append(f"Holdout obs: {int(total['n_obs'])}")
+            lines.append(f"Post-event obs: {int(total['n_obs'])}")
         if self.diagnostics:
             d = self.diagnostics
             lines.append("")
@@ -327,19 +327,19 @@ def run_single_its(
     model = _get_model(model_name, model_params)
 
     # 3b. Warn about long-horizon ARIMA forecasts (B5). The horizon is a
-    # CALENDAR span, measured from the holdout dates themselves: counting
-    # rows would misread a 104-week holdout as 104 days on weekly data.
-    holdout_span_days = 0
-    if not splits.holdout_df.empty:
-        h_dates = pd.to_datetime(splits.holdout_df[date_col])
-        holdout_span_days = (h_dates.max() - h_dates.min()).days
-    if model_name == "arima" and holdout_span_days > 90:
+    # CALENDAR span, measured from the post-event dates themselves: counting
+    # rows would misread a 104-week post-event window as 104 days on weekly data.
+    post_event_span_days = 0
+    if not splits.post_event_df.empty:
+        post_dates = pd.to_datetime(splits.post_event_df[date_col])
+        post_event_span_days = (post_dates.max() - post_dates.min()).days
+    if model_name == "arima" and post_event_span_days > 90:
         warnings.warn(
-            f"ARIMA with a holdout window spanning {holdout_span_days} "
+            f"ARIMA with a post-event window spanning {post_event_span_days} "
             "calendar days: ARIMA point forecasts converge to the "
             "unconditional mean over long horizons, which can bias the "
             "counterfactual estimate. Consider prophet_xgb for "
-            "holdout windows beyond 90 days.",
+            "post-event windows beyond 90 days.",
             UserWarning,
             stacklevel=2,
         )

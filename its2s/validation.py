@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 
 def validate_inputs(df, intervention_date, date_col, target_col,
                     covariate_cols, model_name,
-                    split_method=None, test_pct=None, holdout_pct=None,
-                    test_days=None, holdout_days=None,
-                    test_obs=None, holdout_obs=None):
+                    split_method=None, test_pct=None, post_event_pct=None,
+                    test_days=None, post_event_days=None,
+                    test_obs=None, post_event_obs=None):
     """Validate inputs before running the ITS pipeline.
 
     Raises ValueError with a clear message if any check fails.
@@ -87,7 +87,7 @@ def validate_inputs(df, intervention_date, date_col, target_col,
         warnings.warn(
             f"Intervention date {intervention_ts.date()} is outside the data "
             f"range [{dates.min().date()}, {dates.max().date()}]. "
-            "This may result in empty train or holdout splits.",
+            "This may result in empty training or post-event windows.",
             UserWarning,
             stacklevel=3,
         )
@@ -109,9 +109,9 @@ def validate_inputs(df, intervention_date, date_col, target_col,
             raise ValueError(
                 f"periods.test_pct must be in (0, 1), got {test_pct}."
             )
-        if holdout_pct is not None and not (0 < holdout_pct <= 1):
+        if post_event_pct is not None and not (0 < post_event_pct <= 1):
             raise ValueError(
-                f"periods.holdout_pct must be in (0, 1], got {holdout_pct}."
+                f"periods.post_event_pct must be in (0, 1], got {post_event_pct}."
             )
     elif split_method == "days":
         # test_days is calendar time, so compare it against the calendar span
@@ -125,15 +125,15 @@ def validate_inputs(df, intervention_date, date_col, target_col,
                 "split_method='percent'."
             )
     elif split_method == "observations":
-        if test_obs is None or holdout_obs is None:
+        if test_obs is None or post_event_obs is None:
             raise ValueError(
                 "split_method='observations' requires periods.test_obs and "
-                "periods.holdout_obs to be set."
+                "periods.post_event_obs to be set."
             )
-        if test_obs < 1 or holdout_obs < 1:
+        if test_obs < 1 or post_event_obs < 1:
             raise ValueError(
-                f"periods.test_obs and periods.holdout_obs must be >= 1, got "
-                f"test_obs={test_obs}, holdout_obs={holdout_obs}."
+                f"periods.test_obs and periods.post_event_obs must be >= 1, got "
+                f"test_obs={test_obs}, post_event_obs={post_event_obs}."
             )
         if test_obs >= n_before:
             raise ValueError(
