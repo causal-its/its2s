@@ -6,6 +6,8 @@
 # Usage: python -m pytest tests/test_frequency.py -v --tb=short
 # Dependencies: pytest, pandas, its2s
 
+import warnings
+
 import pandas as pd
 import pytest
 
@@ -33,6 +35,13 @@ class TestResolveRegularGrids:
     def test_accepts_series_input(self):
         s = pd.Series(_dates("D"))
         assert resolve_frequency(s).alias == "D"
+
+    @pytest.mark.parametrize("freq", ["D", "W-SAT", "MS", "h"])
+    def test_resolution_emits_no_warning(self, freq):
+        # pandas 3.1 warns on every plain infer_freq call; the resolver must not.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert resolve_frequency(_dates(freq)).alias == freq
 
     def test_offset_reconstructs_grid(self):
         freq = resolve_frequency(_dates("W-SAT", n=5))

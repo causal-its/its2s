@@ -90,7 +90,7 @@ def resolve_frequency(dates):
             "ascending."
         )
 
-    alias = pd.infer_freq(idx)
+    alias = _infer_alias(idx)
     if alias is None:
         _raise_irregular(idx)
 
@@ -137,6 +137,21 @@ def dominant_seasonal_period(series_freq):
         return None
     family = series_freq.alias.split("-")[0]
     return _DOMINANT_CYCLES.get(family)
+
+
+def _infer_alias(idx):
+    """pd.infer_freq as an alias string, without pandas 3.1's FutureWarning.
+
+    pandas 3.1 warns that infer_freq will return an offset rather than a
+    string; where that option exists, ask for the offset and take its alias.
+    Older pandas has no such option and returns the string directly.
+    """
+    try:
+        with pd.option_context("future.infer_freq_returns_offset", True):
+            offset = pd.infer_freq(idx)
+    except (KeyError, pd.errors.OptionError):
+        return pd.infer_freq(idx)
+    return None if offset is None else offset.freqstr
 
 
 def _raise_irregular(idx):
