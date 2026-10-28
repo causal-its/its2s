@@ -62,7 +62,8 @@ class Seasonality:
 def _sampling_interval(freq):
     """Return ("days", n) for day/week-based sampling or ("months", n)."""
     off = freq.offset
-    if isinstance(off, offsets.Tick):
+    # pandas 3 moved Day out of Tick (a calendar day, not 24 hours).
+    if isinstance(off, (offsets.Tick, offsets.Day)):
         return "days", pd.Timedelta(off) / pd.Timedelta(days=1)
     if isinstance(off, offsets.Week):
         return "days", 7.0 * off.n

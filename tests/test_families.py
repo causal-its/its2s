@@ -120,6 +120,8 @@ class TestSeasonality:
         ("annual", "MS", 12.0),
         ("annual", "QS-JAN", 4.0),
         ("weekly", "D", 7.0),
+        ("annual", "2D", 365.25 / 2),
+        ("weekly", "2D", 3.5),
     ])
     def test_period_arithmetic(self, cycle, alias, m):
         assert cycle_period(cycle, _freq(alias)) == pytest.approx(m)
