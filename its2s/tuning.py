@@ -14,72 +14,10 @@ from scipy.stats import qmc
 
 from .cross_validation import (_CV_METHOD_ARGS, _default_cv_end_date,
                                time_series_cv)
+from .models.families import FAMILIES
 from .settings import _deep_merge, load_config
 
 logger = logging.getLogger(__name__)
-
-# Default trial counts per model, matching the R reference implementation:
-# ARIMA=100, NNETAR (-> NeuralProphet)=75, prophet_xgb=100
-_DEFAULT_N_TRIALS = {
-    "prophet_xgb":      100,
-    "neuralprophet":    75,
-    "arima":            100,
-}
-
-# Search spaces: param_name -> (low, high, dtype, scale)
-# These are the tuning ranges used by the Latin hypercube sampler. They are
-# independent of params.yaml, which holds default (non-tuning) fallback values.
-#   dtype : "int" or "float"
-#   scale : "linear" or "log" (log produces a log-uniform distribution)
-#
-# Params prefixed "section__" are nested into {"section": {param: value}} in the
-# model config dict before injection via config_overrides.
-#
-# NOTE on ARIMA: the R reference tunes fixed ARIMA orders (p,d,q,P,D,Q). The Python
-# ARIMAModel uses pmdarima.auto_arima, which accepts upper bounds (max_p, max_d, etc.)
-# and selects the best order within those bounds. Tuning these bounds controls the
-# search space available to auto_arima rather than selecting a fixed order -- a
-# methodological difference from the R implementation that should be noted in
-# any downstream reporting.
-
-_ARIMA_SPACE = {
-    "max_p": (1, 5, "int", "linear"),
-    "max_d": (0, 2, "int", "linear"),
-    "max_q": (1, 5, "int", "linear"),
-    "max_P": (0, 3, "int", "linear"),
-    "max_D": (0, 1, "int", "linear"),
-    "max_Q": (0, 3, "int", "linear"),
-}
-
-_NEURALPROPHET_SPACE = {
-    # n_lags bounds are OBSERVATION counts (7..30 rows), not calendar days.
-    "n_lags":          (7,     30,   "int",   "linear"),
-    "epochs":          (50,    200,  "int",   "linear"),
-    "learning_rate":   (0.001, 0.1,  "float", "log"),
-    "batch_size":      (16,    128,  "int",   "linear"),
-    "n_hidden_layers": (0,     2,    "int",   "linear"),
-}
-
-# Mirrors R phxgb: 3 Prophet params + 7 XGBoost params = 10 total (R had 11,
-# including growth=linear and seasonality_yearly=TRUE which are fixed here).
-_PROPHET_XGB_SPACE = {
-    "prophet__changepoint_prior_scale": (0.01,  0.5,  "float", "log"),
-    "prophet__seasonality_prior_scale": (0.1,   10.0, "float", "log"),
-    "prophet__changepoint_range":       (0.4,   0.9,  "float", "linear"),
-    "xgb__n_estimators":                (50,    500,  "int",   "linear"),
-    "xgb__max_depth":                   (4,     20,   "int",   "linear"),
-    "xgb__learning_rate":               (0.001, 0.3,  "float", "log"),
-    "xgb__min_child_weight":            (1,     12,   "int",   "linear"),
-    "xgb__subsample":                   (0.6,   1.0,  "float", "linear"),
-    "xgb__colsample_bytree":            (0.5,   1.0,  "float", "linear"),
-    "xgb__gamma":                       (0.001, 5.0,  "float", "log"),
-}
-
-_SEARCH_SPACES = {
-    "prophet_xgb":      _PROPHET_XGB_SPACE,
-    "neuralprophet":    _NEURALPROPHET_SPACE,
-    "arima":            _ARIMA_SPACE,
-}
 
 
 @dataclass
@@ -231,7 +169,6 @@ def tune_model(
     min_train_pct: float | None = None,
     skip_pct: float | None = None,
     metric: str = "rmse",
-    config_path=None,
     config_overrides: dict | None = None,
     n_jobs: int = 1,
     seed: int = 42,
@@ -256,7 +193,7 @@ def tune_model(
 
     By default, tuning folds are capped at the start of the held-out test
     window that run_single_its will evaluate on, derived row-exactly from the
-    config's "periods" section (GH #40). Pass the same config_path /
+    config's "periods" section (GH #40). Pass the same
     config_overrides you will run with so the derived boundary matches the
     run; pass cv_end_date=intervention_date to deliberately tune on all
     pre-intervention data.
@@ -311,8 +248,6 @@ def tune_model(
         pre-intervention data.
     metric : str
         Objective for selecting the best parameter set. "rmse" or "mae".
-    config_path : str or Path, optional
-        Path to a custom base YAML config (merged before tuning overrides).
     config_overrides : dict, optional
         Runtime config overrides, as in run_single_its. Pass the same
         overrides here that the run will use -- in particular any "periods"
@@ -355,10 +290,10 @@ def tune_model(
                               **overrides},
         )
     """
-    if model_name not in _SEARCH_SPACES:
+    if model_name not in FAMILIES:
         raise ValueError(
             f"No search space defined for '{model_name}'. "
-            f"Available: {list(_SEARCH_SPACES)}"
+            f"Available: {list(FAMILIES)}"
         )
     if metric not in ("rmse", "mae"):
         raise ValueError(f"metric must be 'rmse' or 'mae', got '{metric}'")
@@ -388,7 +323,7 @@ def tune_model(
             "arguments for the chosen split_method only."
         )
 
-    n_trials = n_trials if n_trials is not None else _DEFAULT_N_TRIALS[model_name]
+    n_trials = n_trials if n_trials is not None else FAMILIES[model_name].starter_n_trials
 
     # M2-3: Lower-bound parameter checks
     if n_trials < 1:
@@ -411,7 +346,7 @@ def tune_model(
                 f"intervention_date ({intervention_ts.date()})."
             )
     else:
-        config = load_config(config_path, config_overrides)
+        config = load_config(config_overrides)
         cv_end_date = _default_cv_end_date(
             df, intervention_date, config["data"]["date_col"], config)
 
@@ -419,7 +354,6 @@ def tune_model(
         "n_folds":        n_folds,
         "cv_end_date":    cv_end_date,
         "split_method":   split_method,
-        "config_path":    config_path,
     }
     if split_method == "observations":
         test_obs = 365 if test_obs is None else test_obs
@@ -436,7 +370,7 @@ def tune_model(
         cv_kwargs.update(test_pct=test_pct, min_train_pct=min_train_pct,
                          skip_pct=skip_pct)
 
-    search_space = _SEARCH_SPACES[model_name]
+    search_space = FAMILIES[model_name].search_space
 
     flat_trials = _sample_lhs(search_space, n_trials, seed)
     nested_trials = [_unflatten_params(p) for p in flat_trials]

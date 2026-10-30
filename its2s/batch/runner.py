@@ -28,7 +28,7 @@ def _make_run_dir(output_dir, n_sim):
     return run_dir
 
 
-def _run_one_series(series_spec, config_path, series_output_dir, seed):
+def _run_one_series(series_spec, series_output_dir, seed):
     """Run a single series through the pipeline."""
     series_seed = derive_seed(seed, series_spec["series_id"])
 
@@ -39,14 +39,13 @@ def _run_one_series(series_spec, config_path, series_output_dir, seed):
         date_col=series_spec.get("date_col"),
         covariate_cols=series_spec.get("covariate_cols"),
         model_name=series_spec.get("model_name", "arima"),
-        config_path=config_path,
         config_overrides=series_spec.get("config_overrides"),
         output_dir=series_output_dir,
         seed=series_seed,
     )
 
 
-def run_batch(series_list, config_path=None, output_dir="output",
+def run_batch(series_list, output_dir="output",
               n_jobs=1, seed=42):
     """Run ITS pipeline on multiple series.
 
@@ -55,8 +54,6 @@ def run_batch(series_list, config_path=None, output_dir="output",
     series_list : list[dict]
         Each dict has: series_id, df, intervention_date, target_col,
         date_col, covariate_cols, model_name (optional), config_overrides (optional).
-    config_path : str or Path, optional
-        Path to shared YAML config.
     output_dir : str or Path
         Base output directory.
     n_jobs : int
@@ -79,7 +76,7 @@ def run_batch(series_list, config_path=None, output_dir="output",
             )
 
     from ..settings import load_config
-    config = load_config(config_path)
+    config = load_config()
     n_sim = config["bootstrap"]["n_sim"]
 
     run_dir = _make_run_dir(output_dir, n_sim)
@@ -88,7 +85,7 @@ def run_batch(series_list, config_path=None, output_dir="output",
     def _process(spec):
         series_dir = run_dir / spec["series_id"]
         series_dir.mkdir(parents=True, exist_ok=True)
-        return _run_one_series(spec, config_path, series_dir, seed)
+        return _run_one_series(spec, series_dir, seed)
 
     if n_jobs == 1:
         results = []

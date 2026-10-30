@@ -14,7 +14,8 @@ from .frequency import resolve_frequency
 from .metrics.error_metrics import (
     MetricsResult, compute_metrics, resolve_metrics_seasonality,
 )
-from .models.arima import resolve_arima_m
+from .models.families import load_family_class
+from .seasonality import legacy_seasonality
 from .settings import get_model_config, load_config
 
 logger = logging.getLogger(__name__)
@@ -113,7 +114,7 @@ def time_series_cv(df, intervention_date, model_name="arima",
                    split_method="observations",
                    test_pct=None, min_train_pct=None, skip_pct=None,
                    date_col=None, target_col=None, covariate_cols=None,
-                   config_path=None, config_overrides=None):
+                   config_overrides=None):
     """Evaluate a model using expanding-window time-series cross-validation.
 
     All CV windows are sized in OBSERVATIONS (rows of the regular series),
@@ -189,16 +190,12 @@ def time_series_cv(df, intervention_date, model_name="arima",
         Target column name. Defaults to config value.
     covariate_cols : list[str], optional
         Covariate column names.
-    config_path : str or Path, optional
     config_overrides : dict, optional
 
     Returns
     -------
     CVResult
     """
-    # Lazy import to avoid circular dependency
-    from .pipeline import _get_model
-
     if split_method == "days":
         raise ValueError(
             "CV windows are observation counts; use split_method="
@@ -224,7 +221,7 @@ def time_series_cv(df, intervention_date, model_name="arima",
             "arguments for the chosen split_method only."
         )
 
-    config = load_config(config_path, config_overrides)
+    config = load_config(config_overrides)
     date_col = date_col or config["data"]["date_col"]
     target_col = target_col or config["data"]["target_col"]
     covariate_cols = (covariate_cols if covariate_cols is not None
@@ -290,32 +287,26 @@ def time_series_cv(df, intervention_date, model_name="arima",
 
     # Resolve the MASE period m once for all folds, guarded against the
     # SMALLEST training window (fold 1), so m is constant and fold metrics
-    # stay comparable (GH #62). The series frequency is only needed on the
-    # 'auto' path.
-    series_freq = (resolve_frequency(cv_df[date_col])
-                   if seasonality_cfg == "auto" else None)
+    # stay comparable (GH #62). The series frequency also sizes the folds'
+    # seasonal declaration.
+    series_freq = resolve_frequency(cv_df[date_col])
     seasonality = resolve_metrics_seasonality(
         seasonality_cfg, n_train=min_train_obs, series_freq=series_freq,
     )
 
+    model_cls = load_family_class(model_name)
     model_params = get_model_config(config, model_name)
 
-    # Resolve ARIMA's seasonal period m once for all folds, guarded against
-    # the SMALLEST training window, for the same reasons as the MASE m above:
-    # a per-fold resolve could flip m between folds as the training window
-    # grows, and any fallback warning would be swallowed by the fold loop's
-    # warning suppression. Injecting the resolved integer keeps every fold's
-    # fit on the silent explicit path (GH #59, D-055 pattern).
-    if (model_name == "arima"
-            and model_params.get("m", "auto") == "auto"
-            and model_params.get("seasonal", True)):
-        arima_freq = (series_freq if series_freq is not None
-                      else resolve_frequency(cv_df[date_col]))
-        model_params["m"] = resolve_arima_m(
-            "auto", n_train=min_train_obs, series_freq=arima_freq,
-        )
-        logger.info("CV: ARIMA seasonal period fixed at m=%d for all folds",
-                    model_params["m"])
+    # The old path's declaration, derived ONCE against the whole CV window
+    # (spec_P11.04.02 4.7), so every fold carries the seasonal structure the
+    # final fit on the training window will carry: a fold under 730 days no
+    # longer drops the yearly term, nor a fold under 2m ARIMA's period
+    # (GH #74). Built before the fold loop so a config error raises rather
+    # than failing a fold, and its resolution is reported once.
+    declared = legacy_seasonality(model_name, model_params, cv_df,
+                                  series_freq, date_col, target_col)
+    logger.info("CV: every fold carries the seasonal cycles %s",
+                list(declared.cycles))
 
     fold_results = []
 
@@ -332,7 +323,7 @@ def time_series_cv(df, intervention_date, model_name="arima",
         train_fold = cv_df.iloc[:test_start_idx].copy()
         test_fold = cv_df.iloc[test_start_idx:test_end_idx].copy()
 
-        model = _get_model(model_name, model_params)
+        model = model_cls(params=model_params, seasonality=declared)
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")

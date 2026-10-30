@@ -1,15 +1,15 @@
-# Description: Load and merge YAML configuration with defaults.
+# Description: Default configuration for the old path (run_single_its,
+#   tune_model, time_series_cv), merged with runtime overrides. Model defaults
+#   live in the family specs (its2s.models.families); this module only adds
+#   the old path's seasonal "auto" keys, which it turns into a declaration
+#   (its2s.seasonality.legacy_seasonality). Deleted with the old path in
+#   P11.04.07; the YAML file it replaced retired in P11.04.02.
 # Usage: from its2s.settings import load_config, get_model_config
-# Dependencies: pyyaml
+# Dependencies: none (stdlib only)
 
 import copy
-from pathlib import Path
 
-import yaml
-
-# params.yaml holds default (fallback) values, not hyperparameter search ranges.
-# Tuning search spaces live in tuning.py (_ARIMA_SPACE, _NEURALPROPHET_SPACE, etc.).
-_DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "params.yaml"
+from .models.families import FAMILIES
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -23,13 +23,97 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return merged
 
 
-def load_config(path=None, overrides=None):
-    """Load YAML config, merge with defaults, apply overrides.
+# The old path's seasonal keys, resolved per training window by
+# legacy_seasonality: Prophet and NeuralProphet "auto" follow the 730-day
+# yearly rule and the spacing rule for weekly (GH #60, D-057, D-080); ARIMA
+# "auto" derives m from the series frequency with the n_train >= 2m guard
+# (GH #59).
+_LEGACY_SEASONAL_KEYS = {
+    "prophet_xgb": {"prophet": {"yearly_seasonality": "auto",
+                                "weekly_seasonality": "auto",
+                                "daily_seasonality": False}},
+    "neuralprophet": {"yearly_seasonality": "auto", "weekly_seasonality": "auto"},
+    "arima": {"seasonal": True, "m": "auto"},
+}
+
+# Override precedence: config_overrides passed at runtime, then these.
+# After tuning, inject best_params via:
+#   run_single_its(..., config_overrides={"models": {model_name: result.best_params}})
+_LEGACY_DEFAULTS = {
+    "data": {
+        "date_col": "ds",
+        "target_col": "y",
+        "covariate_cols": [],
+        "missing_data": "error",    # "error", "drop", or "interpolate"
+    },
+    # Window sizes default in code per family (prepare_splits): percent
+    # test_pct 0.20 / post_event_pct 1.0, days test_days 365 / post_event_days
+    # 365, observations required with no defaults. They are NOT set here:
+    # only the family matching split_method may appear in config, and keys
+    # from another family raise instead of being silently ignored (GH #28,
+    # #54), so defaults for every family here would make the non-default
+    # methods unreachable.
+    "periods": {
+        "split_method": "percent",  # "percent" | "days" | "observations"
+        "min_test_obs": 30,         # warn below this many test observations (0 disables); GH #29
+    },
+    "models": {name: _deep_merge(spec.defaults, _LEGACY_SEASONAL_KEYS[name])
+               for name, spec in FAMILIES.items()},
+    "bootstrap": {
+        "method": "mbb",
+        "n_sim": 1000,
+        # Block length in OBSERVATIONS, not days: 14 = two weeks on daily
+        # data but 14 weeks on a weekly series. GH #59
+        "block_length": 14,
+        "ci_method": "quantile",
+        "ci_level": 0.95,
+        "n_jobs": 1,
+    },
+    "metrics": {
+        # MASE benchmark period m. "auto" derives the dominant seasonal cycle
+        # from the resolved series frequency; an integer is honored or fails
+        # hard (GH #62).
+        "seasonality": "auto",
+    },
+    "output": {
+        "format": "csv",
+        "plot_dpi": 150,
+        "plot_figsize": [14, 6],
+        # Sequence overrides map to: fit, counterfactual/CI, intervention,
+        # post_event. Dict overrides may also include observed.
+        "plot_colors": {
+            "fit": "#2166AC",
+            "counterfactual": "#B2182B",
+            "intervention": "#4DAF4A",
+            "post_event": "#FEE08B",
+            "observed": "#333333",
+        },
+        "plot_font_sizes": {"title": 22, "axis_label": 20, "tick": 18, "legend": 18},
+    },
+    "parallel": {"n_jobs": 1},
+    # Offsets are unit-explicit: start_offset_days/end_offset_days OR
+    # start_offset_obs/end_offset_obs per period; mixing them raises.
+    "excess_periods": [],
+    # CV window sizes default in code per family (get_tuning_config); only
+    # the family matching split_method may appear (GH #55). cv_end_date is
+    # derived at runtime from the 'periods' split (GH #40).
+    "tuning": {
+        "split_method": "percent",
+        "n_folds": 5,
+        "metric": "rmse",
+        "n_jobs": 1,
+        "seed": 42,
+        "model_defaults": {name: spec.starter_n_trials
+                           for name, spec in FAMILIES.items()},
+    },
+}
+
+
+def load_config(overrides=None):
+    """Return the old path's default config with overrides merged on top.
 
     Parameters
     ----------
-    path : str or Path, optional
-        Path to a custom YAML config. Merged on top of defaults.
     overrides : dict, optional
         Runtime overrides applied last.
 
@@ -37,17 +121,9 @@ def load_config(path=None, overrides=None):
     -------
     dict
     """
-    with open(_DEFAULT_CONFIG_PATH) as f:
-        config = yaml.safe_load(f)
-
-    if path is not None:
-        with open(path) as f:
-            user_config = yaml.safe_load(f) or {}
-        config = _deep_merge(config, user_config)
-
+    config = copy.deepcopy(_LEGACY_DEFAULTS)
     if overrides:
         config = _deep_merge(config, overrides)
-
     return config
 
 

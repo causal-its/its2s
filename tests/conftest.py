@@ -2,6 +2,7 @@
 # Usage: pytest discovers this automatically.
 # Dependencies: numpy, pandas, pytest
 
+import functools
 import warnings
 
 import numpy as np
@@ -45,9 +46,20 @@ _FAST = {"bootstrap": {"n_sim": 10, "n_jobs": 1}}
 _NP_FAST = {**_FAST, "models": {"neuralprophet": _NP_FAST_PARAMS}}
 
 
+def declared(freq_alias, *cycles):
+    """The Seasonality a directly constructed test model carries: the given
+    cycles on a series of frequency freq_alias (e.g. declared("D", "weekly"))."""
+    from its2s.frequency import SeriesFrequency
+    from its2s.seasonality import make_seasonality
+    return make_seasonality(cycles, SeriesFrequency.from_alias(freq_alias))
+
+
 def collect_model_params():
     """Return (model_name, ModelClass, init_params) for all available models.
 
+    ModelClass is bound to the declaration its old "auto" default resolved
+    to on the short daily fixtures (under 730 days, daily spacing): prophet_xgb
+    weekly only; arima and the fast NeuralProphet settings no cycle.
     NeuralProphet is included only when its dependencies are installed.
     Call at module level in test files to build pytest.mark.parametrize lists.
     """
@@ -55,13 +67,17 @@ def collect_model_params():
     from its2s.models.prophet_xgb import ProphetXGBHybridModel
 
     params = [
-        ("arima", ARIMAModel,
-         {"seasonal": False, "m": 1, "stepwise": True, "suppress_warnings": True}),
-        ("prophet_xgb", ProphetXGBHybridModel, {}),
+        ("arima", functools.partial(ARIMAModel, seasonality=declared("D")),
+         {"stepwise": True, "suppress_warnings": True}),
+        ("prophet_xgb",
+         functools.partial(ProphetXGBHybridModel, seasonality=declared("D", "weekly")),
+         {}),
     ]
     if _has_neuralprophet():
         from its2s.models.neuralprophet import NeuralProphetModel
-        params.append(("neuralprophet", NeuralProphetModel, _NP_FAST_PARAMS))
+        params.append(("neuralprophet",
+                       functools.partial(NeuralProphetModel, seasonality=declared("D")),
+                       _NP_FAST_PARAMS))
     return params
 
 

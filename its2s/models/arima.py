@@ -1,105 +1,78 @@
 # Description: ARIMA model via pmdarima auto_arima.
 # Usage: from its2s.models.arima import ARIMAModel
-# Dependencies: pmdarima, numpy, pandas
+# Dependencies: pmdarima, joblib, numpy
 
 import copy
-import logging
 import warnings
 
+import joblib
 import numpy as np
-import pandas as pd
 import pmdarima as pm
 
-from ..frequency import dominant_seasonal_period, resolve_frequency
 from .base import BaseModel, FitResult, PredictionResult
+from .families import get_family
 
-logger = logging.getLogger(__name__)
+# Relative rounding of a declared period beyond which m is reported as far
+# from an integer (spec_P11.04.02 OQ-3): 52.18 -> 52 moves m by 0.35%.
+_M_ROUNDING_WARN = 0.01
+
+# The (cycle, m) pairs ARIMA can honour (OQ-3): weekly on daily data; annual
+# on weekly, monthly or quarterly data.
+_HONOURED = {("weekly", 7), ("annual", 52), ("annual", 12), ("annual", 4)}
+
+# auto_arima's own starting orders. It raises when a bound is below its start
+# (and when max_d is 0), which tuning would score as inf and silently lose
+# (spec_P11.04.02 OQ-12, F-012), so each search starts at min(start, bound).
+_START = {"p": 2, "q": 2, "P": 1, "Q": 1}
 
 
-def resolve_arima_m(m_cfg, n_train, series_freq=None):
-    """Resolve the seasonal period m for the auto_arima search (GH #59).
+def declared_m(seasonality):
+    """The integer seasonal period ARIMA carries for a declaration (OQ-3).
 
-    "auto" derives the dominant cycle from the resolved series frequency
-    (daily 7, weekly 52, monthly 12) and falls back LOUDLY to m=1
-    (non-seasonal) when the frequency is unmapped or the training window
-    fails the length guard n_train >= 2m (one cycle is consumed by seasonal
-    differencing; at least another is needed to estimate the seasonal terms).
-
-    An explicit integer is always honored, never substituted: m < 1 raises,
-    and an explicit value failing the length guard fits as asked with an
-    advisory warning. This deliberately differs from
-    resolve_metrics_seasonality, which raises on an explicit guard failure:
-    there m defines the benchmark a reported metric is measured against;
-    here it is a model specification whose quality is visible in the fit's
-    own diagnostics.
+    ARIMA holds at most one seasonal period, and auto_arima cannot fit a
+    period in the hundreds, so it accepts exactly: no cycle (m=1); weekly on
+    daily data (7); annual on weekly (52), monthly (12) or quarterly (4)
+    data. Anything else raises, naming prophet_xgb.
     """
-    if m_cfg == "auto":
-        m = dominant_seasonal_period(series_freq)
-        if m is None:
-            alias = series_freq.alias if series_freq is not None else "unknown"
-            warnings.warn(
-                f"models.arima.m='auto': no dominant seasonal period is "
-                f"mapped for series frequency '{alias}'. Falling back to "
-                "m=1 (non-seasonal ARIMA). Set models.arima.m to an integer "
-                "to name the period explicitly: "
-                'config_overrides={"models": {"arima": {"m": <period>}}}.',
-                UserWarning,
-                stacklevel=2,
-            )
-            return 1
-        if n_train < 2 * m:
-            warnings.warn(
-                f"models.arima.m='auto': a seasonal fit at m={m} needs "
-                f"n_train >= 2*m ({2 * m}) but only {n_train} training "
-                "observations are available. Falling back to m=1 "
-                "(non-seasonal ARIMA). Set models.arima.m to an integer to "
-                "override.",
-                UserWarning,
-                stacklevel=2,
-            )
-            return 1
-        logger.info(
-            "ARIMA seasonal period resolved from series frequency %s: m=%d",
-            series_freq.alias, m,
-        )
-        return m
-
-    m = int(m_cfg)
-    if m < 1:
-        raise ValueError(f"models.arima.m must be >= 1, got {m_cfg!r}.")
-    if n_train < 2 * m:
+    cycles = seasonality.cycles
+    if not cycles:
+        return 1
+    if len(cycles) > 1:
+        raise ValueError(
+            f"arima carries one seasonal period; {list(cycles)} are declared. "
+            "Declare one cycle, or use prophet_xgb, which carries both.")
+    period = seasonality.periods[cycles[0]]
+    m = int(round(period))
+    if (cycles[0], m) not in _HONOURED:
+        raise ValueError(
+            f"arima cannot carry the {cycles[0]} cycle on "
+            f"{seasonality.freq.alias!r} data (m={m}). Use prophet_xgb, or "
+            "aggregate the series to a coarser interval.")
+    if abs(m - period) / period > _M_ROUNDING_WARN:
         warnings.warn(
-            f"models.arima.m={m}: a seasonal fit at m={m} needs n_train >= "
-            f"2*m ({2 * m}) but only {n_train} training observations are "
-            "available. The explicit value is honored; expect an unstable "
-            "or degenerate seasonal fit. Set a smaller m, or "
-            "models.arima.seasonal=false, to silence this warning.",
-            UserWarning,
-            stacklevel=2,
-        )
+            f"The {cycles[0]} cycle spans {period:.2f} observations on "
+            f"{seasonality.freq.alias!r} data; arima rounds it to m={m}.",
+            UserWarning, stacklevel=3)
     return m
 
 
 class ARIMAModel(BaseModel):
     """ARIMA model using pmdarima's auto_arima for automatic order selection.
 
-    On first fit, auto_arima selects the best (p,d,q) and seasonal order.
-    clone_fresh() preserves the discovered order so MBB refits use the same
-    model structure without repeating the expensive stepwise search.
-
-    The seasonal period m defaults to "auto": resolved from the training
-    dates via the series-frequency dominant-cycle mapping (daily 7, weekly
-    52, monthly 12), with a loud fallback to m=1 when the frequency is
-    unmapped, unresolvable, or the training window is too short. An explicit
-    integer m is always honored (see resolve_arima_m). m is only consulted
-    on the initial auto_arima search: refit clones reuse the discovered
-    seasonal_order, which already carries it.
+    On first fit, auto_arima selects the best (p,d,q) and seasonal order
+    within the declared seasonal period m (declared_m). clone_fresh()
+    preserves the discovered order so MBB refits use the same model
+    structure without repeating the expensive stepwise search.
     """
 
-    def __init__(self, params=None, _fixed_order=None, _fixed_seasonal_order=None):
-        super().__init__(params)
+    spec = get_family("arima")
+    _libraries = ("pmdarima",)
+
+    def __init__(self, params, seasonality, _fixed_order=None,
+                 _fixed_seasonal_order=None):
+        super().__init__(params, seasonality)
+        self._m = declared_m(seasonality)
         self._model = None
-        self._covariate_cols = None
         self._fixed_order = _fixed_order
         self._fixed_seasonal_order = _fixed_seasonal_order
 
@@ -114,7 +87,7 @@ class ARIMAModel(BaseModel):
             self._model = pm.ARIMA(
                 order=self._fixed_order,
                 seasonal_order=self._fixed_seasonal_order,
-                suppress_warnings=p.get("suppress_warnings", True),
+                suppress_warnings=p["suppress_warnings"],
             )
             self._model.fit(y, exogenous=exog)
         else:
@@ -122,13 +95,22 @@ class ARIMAModel(BaseModel):
             self._model = pm.auto_arima(
                 y,
                 exogenous=exog,
-                max_p=p.get("max_p", 5),
-                max_d=p.get("max_d", 2),
-                max_q=p.get("max_q", 5),
-                seasonal=p.get("seasonal", True),
-                m=self._resolve_m(train_df, date_col),
-                stepwise=p.get("stepwise", True),
-                suppress_warnings=p.get("suppress_warnings", True),
+                start_p=min(_START["p"], p["max_p"]),
+                max_p=p["max_p"],
+                d=0 if p["max_d"] == 0 else None,
+                max_d=p["max_d"],
+                start_q=min(_START["q"], p["max_q"]),
+                max_q=p["max_q"],
+                start_P=min(_START["P"], p["max_P"]),
+                max_P=p["max_P"],
+                D=0 if p["max_D"] == 0 else None,
+                max_D=p["max_D"],
+                start_Q=min(_START["Q"], p["max_Q"]),
+                max_Q=p["max_Q"],
+                seasonal=self._m > 1,
+                m=self._m,
+                stepwise=p["stepwise"],
+                suppress_warnings=p["suppress_warnings"],
                 error_action="ignore",
             )
             self._fixed_order = self._model.order
@@ -144,39 +126,6 @@ class ARIMAModel(BaseModel):
             metadata={"order": self._model.order, "seasonal_order": self._model.seasonal_order},
         )
         return self._fit_result
-
-    def _resolve_m(self, train_df, date_col):
-        """Resolve the seasonal period for the initial auto_arima search."""
-        p = self.params
-        if not p.get("seasonal", True):
-            # m cannot matter when the seasonal search is off; skip
-            # resolution so no frequency warning fires for an inert knob.
-            return 1
-        m_cfg = p.get("m", "auto")
-        if m_cfg != "auto":
-            return resolve_arima_m(m_cfg, n_train=len(train_df))
-        try:
-            series_freq = resolve_frequency(
-                pd.to_datetime(train_df[date_col]).sort_values()
-            )
-        except ValueError as exc:
-            # Standalone use on an irregular grid must stay usable: warn and
-            # fall back rather than turning a previously working fit into a
-            # hard error. Pipeline callers never reach this (the pipeline
-            # resolves and raises at ingest).
-            warnings.warn(
-                f"models.arima.m='auto': could not resolve the series "
-                f"frequency from the training dates "
-                f"({str(exc).splitlines()[0]}) Falling back to m=1 "
-                "(non-seasonal ARIMA). Set models.arima.m explicitly if the "
-                "series is seasonal.",
-                UserWarning,
-                stacklevel=3,
-            )
-            return 1
-        return resolve_arima_m(
-            "auto", n_train=len(train_df), series_freq=series_freq
-        )
 
     def predict(self, target_df, target_col="y", date_col="ds", covariate_cols=None):
         covariate_cols = covariate_cols or self._covariate_cols
@@ -196,6 +145,24 @@ class ARIMAModel(BaseModel):
     def clone_fresh(self):
         return ARIMAModel(
             params=copy.deepcopy(self.params),
+            seasonality=self.seasonality,
             _fixed_order=self._fixed_order,
             _fixed_seasonal_order=self._fixed_seasonal_order,
         )
+
+    def seasonal_components(self):
+        """The declared m and whether the seasonal search ran (OQ-5); the
+        fitted seasonal order is an estimate, reported but not held equal."""
+        return {"m": self._m, "seasonal_search": self._m > 1,
+                "fitted_seasonal_order": (tuple(self._model.seasonal_order)
+                                          if self._model is not None else None)}
+
+    def _save_fitted(self, directory):
+        # pmdarima has no native format; joblib is its documented route.
+        joblib.dump(self._model, directory / "arima.joblib")
+
+    def _load_fitted(self, directory):
+        self._model = joblib.load(directory / "arima.joblib")
+        self._fixed_order = self._model.order
+        self._fixed_seasonal_order = self._model.seasonal_order
+        self._fit_result = None

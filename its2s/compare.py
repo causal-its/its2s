@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def compare_models(df, intervention_date, model_names=None,
                    target_col=None, date_col=None, covariate_cols=None,
-                   config_path=None, config_overrides=None,
+                   config_overrides=None,
                    output_dir=None, seed=42):
     """Run the ITS pipeline with multiple models and return a comparison table.
 
@@ -29,7 +29,6 @@ def compare_models(df, intervention_date, model_names=None,
     target_col : str, optional
     date_col : str, optional
     covariate_cols : list[str], optional
-    config_path : str or Path, optional
     config_overrides : dict, optional
     output_dir : str or Path, optional
     seed : int
@@ -58,7 +57,6 @@ def compare_models(df, intervention_date, model_names=None,
                     date_col=date_col,
                     covariate_cols=covariate_cols,
                     model_name=model_name,
-                    config_path=config_path,
                     config_overrides=config_overrides,
                     output_dir=output_dir,
                     seed=seed,
