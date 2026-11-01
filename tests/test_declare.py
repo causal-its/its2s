@@ -418,8 +418,9 @@ class TestRecord:
         d.set_criteria(S2=True)              # cv1 has two folds: S2 not computable
         with pytest.warns(DesignWarning) as caught:
             record = declare_design(d)
-        assert len([w for w in caught if w.category is DesignWarning]) == 1
-        assert "fold stability" in str(caught[0].message)
+        ours = [w for w in caught if w.category is DesignWarning]
+        assert len(ours) == 1
+        assert "fold stability" in str(ours[0].message)
         assert [w["title"] for w in record.warnings] == ["fold stability"]
         report = record.report()
         assert "ISSUES  0 errors, 1 warning" in report
