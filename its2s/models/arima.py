@@ -3,22 +3,13 @@
 # Dependencies: pmdarima, joblib, numpy
 
 import copy
-import warnings
 
 import joblib
 import numpy as np
 import pmdarima as pm
 
 from .base import BaseModel, FitResult, PredictionResult
-from .families import get_family
-
-# Relative rounding of a declared period beyond which m is reported as far
-# from an integer (spec_P11.04.02 OQ-3): 52.18 -> 52 moves m by 0.35%.
-_M_ROUNDING_WARN = 0.01
-
-# The (cycle, m) pairs ARIMA can honour (OQ-3): weekly on daily data; annual
-# on weekly, monthly or quarterly data.
-_HONOURED = {("weekly", 7), ("annual", 52), ("annual", 12), ("annual", 4)}
+from .families import arima_period, get_family
 
 # auto_arima's own starting orders. It raises when a bound is below its start
 # (and when max_d is 0), which tuning would score as inf and silently lose
@@ -26,41 +17,11 @@ _HONOURED = {("weekly", 7), ("annual", 52), ("annual", 12), ("annual", 4)}
 _START = {"p": 2, "q": 2, "P": 1, "Q": 1}
 
 
-def declared_m(seasonality):
-    """The integer seasonal period ARIMA carries for a declaration (OQ-3).
-
-    ARIMA holds at most one seasonal period, and auto_arima cannot fit a
-    period in the hundreds, so it accepts exactly: no cycle (m=1); weekly on
-    daily data (7); annual on weekly (52), monthly (12) or quarterly (4)
-    data. Anything else raises, naming prophet_xgb.
-    """
-    cycles = seasonality.cycles
-    if not cycles:
-        return 1
-    if len(cycles) > 1:
-        raise ValueError(
-            f"arima carries one seasonal period; {list(cycles)} are declared. "
-            "Declare one cycle, or use prophet_xgb, which carries both.")
-    period = seasonality.periods[cycles[0]]
-    m = int(round(period))
-    if (cycles[0], m) not in _HONOURED:
-        raise ValueError(
-            f"arima cannot carry the {cycles[0]} cycle on "
-            f"{seasonality.freq.alias!r} data (m={m}). Use prophet_xgb, or "
-            "aggregate the series to a coarser interval.")
-    if abs(m - period) / period > _M_ROUNDING_WARN:
-        warnings.warn(
-            f"The {cycles[0]} cycle spans {period:.2f} observations on "
-            f"{seasonality.freq.alias!r} data; arima rounds it to m={m}.",
-            UserWarning, stacklevel=3)
-    return m
-
-
 class ARIMAModel(BaseModel):
     """ARIMA model using pmdarima's auto_arima for automatic order selection.
 
     On first fit, auto_arima selects the best (p,d,q) and seasonal order
-    within the declared seasonal period m (declared_m). clone_fresh()
+    within the declared seasonal period m (arima_period). clone_fresh()
     preserves the discovered order so MBB refits use the same model
     structure without repeating the expensive stepwise search.
     """
@@ -71,7 +32,7 @@ class ARIMAModel(BaseModel):
     def __init__(self, params, seasonality, _fixed_order=None,
                  _fixed_seasonal_order=None):
         super().__init__(params, seasonality)
-        self._m = declared_m(seasonality)
+        self._m = arima_period(seasonality)
         self._model = None
         self._fixed_order = _fixed_order
         self._fixed_seasonal_order = _fixed_seasonal_order

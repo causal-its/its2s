@@ -3,10 +3,11 @@
 #   search space and class location. Importing this module imports none of
 #   prophet, pmdarima or neuralprophet, so a declaration can be checked before
 #   any heavy import or fit.
-# Usage: from its2s.models.families import get_family, load_family_class
+# Usage: from its2s.models.families import get_family, arima_period
 # Dependencies: none (stdlib only)
 
 import importlib
+import warnings
 from dataclasses import dataclass, field
 
 # Search spaces: param_name -> (low, high, dtype, scale)
@@ -157,6 +158,47 @@ def load_family_class(name):
             f"Check that all dependencies for this model are installed."
         ) from e
     return getattr(module, class_name)
+
+
+# Relative rounding of a declared period beyond which m is reported as far
+# from an integer (spec_P11.04.02 OQ-3): 52.18 -> 52 moves m by 0.35%.
+_M_ROUNDING_WARN = 0.01
+
+# The (cycle, m) pairs ARIMA can honour (OQ-3): weekly on daily data; annual
+# on weekly, monthly or quarterly data.
+_HONOURED = {("weekly", 7), ("annual", 52), ("annual", 12), ("annual", 4)}
+
+
+def arima_period(seasonality):
+    """The integer seasonal period ARIMA carries for a declaration
+    (spec_P11.04.02 OQ-3).
+
+    ARIMA holds at most one seasonal period, and auto_arima cannot fit a
+    period in the hundreds, so it accepts exactly: no cycle (m=1); weekly on
+    daily data (7); annual on weekly (52), monthly (12) or quarterly (4)
+    data. Anything else raises, naming prophet_xgb. Lives here, import-free,
+    so step 0 can apply it before any heavy import (spec_P11.04.03 3.3).
+    """
+    cycles = seasonality.cycles
+    if not cycles:
+        return 1
+    if len(cycles) > 1:
+        raise ValueError(
+            f"arima carries one seasonal period; {list(cycles)} are declared. "
+            "Declare one cycle, or use prophet_xgb, which carries both.")
+    period = seasonality.periods[cycles[0]]
+    m = int(round(period))
+    if (cycles[0], m) not in _HONOURED:
+        raise ValueError(
+            f"arima cannot carry the {cycles[0]} cycle on "
+            f"{seasonality.freq.alias!r} data (m={m}). Use prophet_xgb, or "
+            "aggregate the series to a coarser interval.")
+    if abs(m - period) / period > _M_ROUNDING_WARN:
+        warnings.warn(
+            f"The {cycles[0]} cycle spans {period:.2f} observations on "
+            f"{seasonality.freq.alias!r} data; arima rounds it to m={m}.",
+            UserWarning, stacklevel=3)
+    return m
 
 
 @dataclass(frozen=True)
