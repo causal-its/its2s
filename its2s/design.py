@@ -39,7 +39,8 @@ CLOSING_LINE = "Nothing has been written. No model has been fit."
 class Criterion:
     """One entry of the closed criteria menu (contract 6.4, 7.4).
 
-    op : "<", "<=", ">=" or "band" (two-sided, inclusive, threshold a pair)
+    op : "<", "<=", ">=" or "band" (two-sided, inclusive at both ends,
+         threshold a pair; printed [lo, hi])
     """
 
     id: str
@@ -90,6 +91,15 @@ class Finding:
         return {"level": self.level, "title": self.title, "message": self.message}
 
 
+class FrozenDesignError(ValueError):
+    """A mutator was called on a Design that declare_design has sealed.
+
+    A ValueError, so code catching the API's misuse errors still catches
+    it (spec_P11.04.03 4.4); its own name says what went wrong (user ruling
+    2026-11-01, C2 judgment call 7). Exported publicly with C3.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
@@ -128,7 +138,7 @@ def _is_number(value):
 def _fmt_threshold(op, threshold):
     if op == "band":
         lo, hi = threshold
-        return f"{lo} to {hi}"
+        return f"[{lo}, {hi}]"
     return f"{op} {threshold}"
 
 
@@ -222,13 +232,14 @@ class Design:
 
     def _mutable(self):
         if self._frozen:
-            raise ValueError("This design has been declared and is frozen; build a "
-                             "new Design to change it.")
+            raise FrozenDesignError("This design has been declared and is frozen; "
+                                    "build a new Design to change it.")
 
     # -- 5.4 seasonality ----------------------------------------------------
 
     def set_seasonality(self, cycles=("annual",)):
-        """Declare the outcome's seasonal cycles; None asserts there are none."""
+        """Declare the outcome's seasonal cycles; None declares that the analyst
+        is not willing to assert a cycle (contract 5.4)."""
         self._mutable()
         if cycles is None:
             self._cycles = ()
@@ -242,8 +253,8 @@ class Design:
             raise ValueError(f"Unknown cycle(s) {unknown}; expected a subset of "
                              f"{list(CYCLES)}, or None.")
         if not cycles:
-            raise ValueError("cycles=[] is ambiguous; pass cycles=None to assert the "
-                             "series is aseasonal.")
+            raise ValueError("cycles=[] is ambiguous; pass cycles=None to declare "
+                             "that you are not willing to assert a cycle.")
         self._cycles = tuple(c for c in CYCLES if c in cycles)
         return self
 
@@ -759,6 +770,37 @@ def _resolve_sub_periods(design, dates, e, findings):
     return out
 
 
+def _not_checked(design, dates, e, seasonality):
+    """The groups skipped because what they are measured from is missing.
+
+    Each entry names the groups and why; render_text prints them under the
+    issues so a short issue list is never read as a complete one (user
+    ruling 2026-11-01, C2 judgment call 5).
+    """
+    out = []
+    families = ["family search spaces"] if design._families else []
+    if dates is None:
+        out.append({"groups": ["seasonality", "splits", "data completeness",
+                               "cross-validation", "check origins", "sub-periods",
+                               *families],
+                    "reason": "they are measured on the series' date grid, which "
+                              "could not be resolved"})
+        return out
+    if e is None:
+        arima = ["the arima fold-length rule"] if "arima" in design._families else []
+        out.append({"groups": ["splits", "data completeness", "cross-validation",
+                               "check origins", "sub-periods", *arima],
+                    "reason": "they are measured from the event date, which could "
+                              "not be placed on the grid"})
+    if seasonality is None:
+        groups = families + ([] if e is None else ["check origins"])
+        if groups:
+            out.append({"groups": groups,
+                        "reason": "they depend on the seasonality, which could not "
+                                  "be resolved"})
+    return out
+
+
 def resolve(design):
     """Resolve a Design to the plain description step 0 renders and seals.
 
@@ -871,6 +913,7 @@ def resolve(design):
         "sweep_fits": sum(c["fits"] for c in candidates.values()),
         "plot_all_combinations": design._plot_all,
         "issues": [f.to_dict() for f in findings],
+        "not_checked": _not_checked(design, dates, e, seasonality),
     }
     return resolved, findings
 
@@ -937,7 +980,7 @@ def render_text(resolved):
         how = "declared" if sw["declared"] else "DEFAULT, not declared"
         add(f"SEASONALITY  ({how})")
         if not sw["cycles"]:
-            add("  none: asserted aseasonal (S1 benchmarks against a non-seasonal "
+            add("  none: not willing to assert a cycle (S1 benchmarks against a non-seasonal "
                 "naive forecast; S4 not applicable)")
         for c in sw["cycles"]:
             add(f"  {c:<8} m = {sw['periods'][c]:.2f} observations")
@@ -1051,6 +1094,12 @@ def render_text(resolved):
             add("")
             add(f"{i['level'].upper():<8} {i['title']}")
             add(_wrap(i["message"]))
+    if r["not_checked"]:
+        add("")
+        add("NOT CHECKED")
+        for nc in r["not_checked"]:
+            add(_wrap(f"{', '.join(nc['groups'])}: {nc['reason']}."))
+        add("  Fix the errors above and preview again.")
     if n_err:
         add("")
         add(CLOSING_LINE)

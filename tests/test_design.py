@@ -15,7 +15,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from its2s.design import CLOSING_LINE, CRITERIA, Design, render_text, resolve
+from its2s.design import (CLOSING_LINE, CRITERIA, Design, FrozenDesignError,
+                          render_text, resolve)
 
 EVENT = "2026-06-22"
 
@@ -213,8 +214,10 @@ class TestMisuse:
             lambda: d.set_plot(True),
         ]
         for call in calls:
-            with pytest.raises(ValueError, match="frozen"):
+            with pytest.raises(FrozenDesignError, match="frozen"):
                 call()
+        # Still a ValueError, so catching the API's misuse errors catches it.
+        assert issubclass(FrozenDesignError, ValueError)
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +259,37 @@ class TestData:
         assert "regularly spaced" in _text(_findings(_minimal(_design(df)), "error"))
 
 
+class TestNotChecked:
+    # User ruling 2026-11-01 (C2 judgment call 5): skipped groups are named.
+
+    def test_offgrid_event_names_what_was_skipped(self):
+        d = _minimal(_design(event="2026-06-24"))
+        d.add_split("bad", train_obs=500, test_obs=52)
+        d.add_sub_period("acute", "2026-06-25", "2026-07-08")
+        resolved, _ = resolve(d)
+        groups = [g for nc in resolved["not_checked"] for g in nc["groups"]]
+        for g in ("splits", "cross-validation", "check origins", "sub-periods"):
+            assert g in groups
+        text = render_text(resolved)
+        assert "NOT CHECKED" in text
+        assert "event date" in text
+        assert text.rstrip().endswith(CLOSING_LINE)
+
+    def test_unresolvable_grid_names_seasonality_and_families(self):
+        df = _frame().drop(index=[10, 11])          # a gap: no regular grid
+        d = _minimal(_design(df=df))
+        resolved, _ = resolve(d)
+        groups = [g for nc in resolved["not_checked"] for g in nc["groups"]]
+        assert "seasonality" in groups and "family search spaces" in groups
+        assert "date grid" in resolved["not_checked"][0]["reason"]
+        assert "NOT CHECKED" in render_text(resolved)
+
+    def test_valid_design_has_no_section(self):
+        resolved, _ = resolve(_minimal(_design()))
+        assert resolved["not_checked"] == []
+        assert "NOT CHECKED" not in render_text(resolved)
+
+
 class TestSeasonality:
 
     def test_default_is_annual_and_stamped(self):
@@ -273,6 +307,14 @@ class TestSeasonality:
         assert combo["S4"] == {"value": None, "verdict": "not applicable"}
         origins = resolved["check"]["splits"]["sp1"]
         assert origins["phase_origin"] is None and origins["max_gap"] is None
+        # User ruling 2026-11-01 (C2 judgment call 6): the contract's phrasing.
+        text = render_text(resolved)
+        assert "not willing to assert a cycle" in text
+        assert "aseasonal" not in text
+
+    def test_empty_cycles_list_is_refused(self):
+        with pytest.raises(ValueError, match="cycles=None.*not willing to assert"):
+            _design().set_seasonality([])
 
     def test_daily_without_annual_warns(self):
         df = _frame(start="2025-01-01", periods=540, freq="D")
@@ -360,6 +402,23 @@ class TestCombinations:
         assert resolved["combinations"]["sp1/cv2"]["S5"]["verdict"] == "FAIL"
         assert resolved["combinations"]["sp1/cv1"]["S5"]["verdict"] == "PASS"
         assert "cv2" in _text([f for f in findings if f.title == "fold horizon"])
+
+    def test_s5_band_is_inclusive_and_printed_closed(self):
+        # User ruling 2026-11-01: S5 passes at both ends; printed [lo, hi].
+        d = _design(H=4)
+        d.add_split("sp1", train_obs=129, test_obs=52)
+        for cid, k in (("lo", 2), ("hi", 8), ("under", 1), ("over", 9)):
+            d.add_cv(cid, n_folds=2, fold_eval_obs=k)
+        d.add_family("prophet_xgb", n_trials=10)
+        d.set_criteria(S5=True)
+        resolved, _ = resolve(d)
+        verdicts = {c: resolved["combinations"][f"sp1/{c}"]["S5"]["verdict"]
+                    for c in ("lo", "hi", "under", "over")}
+        assert verdicts == {"lo": "PASS", "hi": "PASS",
+                            "under": "FAIL", "over": "FAIL"}
+        text = render_text(resolved)
+        assert "[0.5, 2.0]" in text
+        assert "0.5 to 2.0" not in text
 
     def test_figure_limit(self):
         d = _minimal(_design())

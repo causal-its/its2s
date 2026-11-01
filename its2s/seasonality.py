@@ -33,8 +33,8 @@ class Seasonality:
     Attributes
     ----------
     cycles : tuple of str
-        Subset of ("weekly", "annual"), in that order. () asserts the series
-        is aseasonal.
+        Subset of ("weekly", "annual"), in that order. () means the analyst
+        is not willing to assert a cycle; no fit carries one.
     freq : SeriesFrequency
         The series' resolved sampling interval.
     periods : dict
