@@ -258,6 +258,35 @@ class Design:
         self._frozen = False
         self._declared_at = None
 
+    # -- 5.11 the starter ---------------------------------------------------
+
+    @classmethod
+    def starter(cls, data, date_col, outcome_col, event_date, horizon, seed,
+                output_dir, series_label, covariate_cols=None):
+        """A first-run design: the plain constructor plus one split, one cv
+        design and one family.
+
+        It prints the three calls it made, so the analyst sees what they
+        would otherwise have typed, and the record stamps that it was used.
+        A convenience, not a recommended design; it is validated like any
+        other and can be changed with the usual methods until it is sealed.
+        """
+        design = cls(data, date_col, outcome_col, covariate_cols, event_date,
+                     horizon, seed, output_dir, series_label)
+        calls = (
+            ("add_split", ("sp1",), {"train_frac": 0.80, "primary": True}),
+            ("add_cv", ("cv1",), {"n_folds": 3, "fold_eval_obs": horizon}),
+            ("add_family", ("prophet_xgb",), {"n_trials": 100}),
+        )
+        print("Design.starter made these three calls, which a design otherwise "
+              "states itself:")
+        for method, args, kwargs in calls:
+            getattr(design, method)(*args, **kwargs)
+            shown = [repr(a) for a in args] + [f"{k}={v!r}" for k, v in kwargs.items()]
+            print(f"  design.{method}({', '.join(shown)})")
+        design._starter_used = True
+        return design
+
     # -- guards -------------------------------------------------------------
 
     def _mutable(self):
@@ -419,9 +448,12 @@ class Design:
     # -- explore and the figure (spec OQ-6, OQ-7) -----------------------------
 
     def set_exploration(self, exploration):
-        """Record the boundary of an explore() run (contract 4)."""
+        """Record what an explore() run read: its boundary, its rows and
+        their fingerprint, so the record says where the look stopped and
+        declaration can check the look was at this series."""
+        from .explore import Exploration
         self._mutable()
-        if not hasattr(exploration, "boundary"):
+        if not isinstance(exploration, Exploration):
             raise TypeError("set_exploration takes the result of its2s.explore().")
         self._exploration = exploration
         return self
@@ -609,7 +641,28 @@ def _resolve_splits(design, dates, findings):
                     f"before the exploration boundary {_iso(boundary)}: explore read "
                     "rows of its test window, so they may have informed this "
                     "declaration.")))
+        _check_explored_rows(design, boundary, findings)
     return resolved
+
+
+def _check_explored_rows(design, boundary, findings):
+    """Warn when the rows explore read are not this design's rows before the
+    boundary: then the stamped boundary says nothing about this analysis."""
+    x = design._exploration
+    if not (pd.to_datetime(design.data[design.date_col]) < pd.Timestamp(boundary)).any():
+        findings.append(Finding("warning", "exploration", (
+            f"explore read {x.rows_read} rows before {_iso(boundary)}, but this "
+            "design's data has none before that date. The recorded boundary "
+            "describes a look at other data.")))
+        return
+    here = fingerprint(design.data, design.date_col, [design.outcome_col], boundary)
+    if here["digest"] != x.fingerprint["digest"]:
+        findings.append(Finding("warning", "exploration", (
+            f"The rows explore read before {_iso(boundary)} ({x.rows_read} rows, "
+            f"{_iso(x.first_date)} to {_iso(x.last_date)}) are not this design's "
+            f"{here['rows']['n']} rows before that date ({here['rows']['first']} to "
+            f"{here['rows']['last']}): a date, an outcome value or the column names "
+            "differ. The recorded boundary describes a look at other data.")))
 
 
 def _check_complete(design, dates, splits, findings):
@@ -865,8 +918,10 @@ def resolve(design):
     exploration = None
     if design._exploration is not None:
         x = design._exploration
-        exploration = {"boundary": _iso(x.boundary),
-                       "rows_read": getattr(x, "rows_read", None)}
+        exploration = {"boundary": _iso(x.boundary), "rows_read": x.rows_read,
+                       "first_date": _iso(x.first_date), "last_date": _iso(x.last_date),
+                       "transform": x.transform, "cycles": list(x.cycles),
+                       "fingerprint": x.fingerprint}
 
     candidates = {}
     for name, fam in families.items():

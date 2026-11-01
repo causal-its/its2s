@@ -9,6 +9,7 @@ from .cross_validation import time_series_cv
 from .design import (Design, DesignError, DesignWarning, FrozenDesignError,
                      SealError, declare_design)
 from .design_record import DesignRecord
+from .explore import explore
 from .metrics.excess import calc_ate_summary
 from .settings import load_config
 from .pipeline import run_single_its
@@ -31,4 +32,5 @@ __all__ = [
     "FrozenDesignError",
     "SealError",
     "DesignRecord",
+    "explore",
 ]

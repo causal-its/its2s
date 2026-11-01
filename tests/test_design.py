@@ -375,12 +375,12 @@ class TestSplits:
         assert "before train_start" in render_text(resolved)
 
     def test_exploration_boundary_warning(self):
+        from its2s import explore
         d = _minimal(_design())
-        d.set_exploration(SimpleNamespace(boundary=pd.Timestamp("2025-09-01"),
-                                          rows_read=139))
+        d.set_exploration(explore(_frame(), "week", "deaths", before="2025-09-01"))
         msg = _text(_findings(d, "warning", "exploration"))
         assert "sp1" in msg and "2025-09-01" in msg
-        d.set_exploration(SimpleNamespace(boundary=pd.Timestamp("2025-06-23")))
+        d.set_exploration(explore(_frame(), "week", "deaths", before="2025-06-23"))
         assert _findings(d, "warning", "exploration") == []
 
 
