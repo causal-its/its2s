@@ -82,12 +82,19 @@ class TestContractExample:
         assert json.loads(json.dumps(resolved)) == resolved
 
     def test_sn13_failed_declaration(self):
-        # sp3 duplicates sp2; cv3 (4 x 13) leaves sp1's smallest fold on 77
-        # rows, 1.48 annual cycles. Both reported together, nothing written.
+        # sp3 duplicates sp2; cv3 (4 x 13) leaves every split's smallest fold
+        # too short for a seasonal arima and thin on cycles; 9 combinations
+        # exceed the figure. The full account is 2 errors and 4 warnings,
+        # all reported together.
         d = _contract_example(_design())
-        d.remove_family("arima")      # keep to SN-13's account (no OQ-5 rule)
         d.add_split("sp3", train_frac=0.80)
         d.add_cv("cv3", n_folds=4, fold_eval_obs=13)
+        assert len(_findings(d, "error")) == 2
+        assert len(_findings(d, "warning")) == 4
+        assert len(_findings(d, "warning", "figure")) == 1
+        assert len(_findings(d, "warning", "thin folds")) == 3
+        cap = _findings(d, "error", "family arima")
+        assert len(cap) == 1 and "104" in cap[0].message
         dup = _findings(d, "error", "duplicate split")
         assert len(dup) == 1
         msg = dup[0].message
