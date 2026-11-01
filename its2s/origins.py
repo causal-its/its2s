@@ -42,10 +42,10 @@ def _phase(date, cycle, unit):
     """A date's fractional position in a cycle: day of year / 365.25 for
     annual (month / 12 on month-based sampling), day of week / 7 for weekly."""
     if cycle == "weekly":
-        return date.dayofweek / 7
+        return date.day_of_week / 7
     if unit == "months":
         return (date.month - 1) / 12
-    return (date.dayofyear - 1) / 365.25
+    return (date.day_of_year - 1) / 365.25
 
 
 def _at_event_phase(event, seasonality):
@@ -58,7 +58,7 @@ def _at_event_phase(event, seasonality):
     cycle = longest_cycle(seasonality)
     unit, n = _sampling_interval(seasonality.freq)
     if cycle == "weekly":
-        return lambda d: d.dayofweek == event.dayofweek and d < event
+        return lambda d: d.day_of_week == event.day_of_week and d < event
     if unit == "months":
         return lambda d: d.month == event.month and d < event
     tol = pd.Timedelta(days=n / 2)
