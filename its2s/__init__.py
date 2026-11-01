@@ -6,6 +6,9 @@ __version__ = "0.1.0"
 from .batch.runner import run_batch
 from .compare import compare_models
 from .cross_validation import time_series_cv
+from .design import (Design, DesignError, DesignWarning, FrozenDesignError,
+                     SealError, declare_design)
+from .design_record import DesignRecord
 from .metrics.excess import calc_ate_summary
 from .settings import load_config
 from .pipeline import run_single_its
@@ -21,4 +24,11 @@ __all__ = [
     "tune_model",
     "TuningResult",
     "calc_ate_summary",
+    "Design",
+    "declare_design",
+    "DesignError",
+    "DesignWarning",
+    "FrozenDesignError",
+    "SealError",
+    "DesignRecord",
 ]

@@ -7,27 +7,35 @@
 #   raises at the call; anything that depends on the data or on how the
 #   pieces combine is a finding, reported as a group. Nothing here fits a
 #   model or imports a model library.
-# Usage: from its2s.design import Design, render_text
-# Dependencies: pandas
+#   declare_design checks the label, validates, prints the report, then
+#   fingerprints, stamps and seals the record and writes it with its report
+#   and figure in one atomic move.
+# Usage: from its2s.design import Design, declare_design, render_text
+# Dependencies: pandas, matplotlib
 
+import json
 import math
 import os
+import shutil
 import textwrap
+import uuid
 import warnings
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 
 import pandas as pd
 
+from . import __version__
+from .design_record import (PLOT_FILE, RECORD_DIR, RECORD_FILE, REPORT_FILE,
+                            DesignRecord, _iso, build_record, fingerprint, record_json)
 from .folds import cycles_seen, layout_folds, longest_cycle
 from .frequency import SeriesFrequency, resolve_frequency
 from .models.families import FAMILIES, arima_period, resolve_space
 from .origins import N_ORIGINS_RANGE, place_origins
 from .seasonality import CYCLES, _sampling_interval, make_seasonality
 from .seeds import derive_seed
+from .outputs.design_plot import MAX_PLOTTED_COMBINATIONS, design_figure
 from .windows import Window, _grid_position, event_position, resolve_split, split_form
-
-# The figure stays readable up to this many combinations (SN-3).
-MAX_PLOTTED_COMBINATIONS = 6
 
 # Reserved name of the whole post-event window (contract 5.10).
 FULL_WINDOW = "full_window"
@@ -95,20 +103,41 @@ class FrozenDesignError(ValueError):
     """A mutator was called on a Design that declare_design has sealed.
 
     A ValueError, so code catching the API's misuse errors still catches
-    it (spec_P11.04.03 4.4); its own name says what went wrong (user ruling
-    2026-11-01, C2 judgment call 7). Exported publicly with C3.
+    it; its own name says what went wrong.
     """
+
+
+class DesignError(ValueError):
+    """declare_design cannot seal this design, or a sealed record is not
+    what was declared.
+
+    errors and warnings hold the findings, when the cause is the design;
+    the message is the grouped report the analyst reads.
+    """
+
+    def __init__(self, message, errors=(), warnings=()):
+        super().__init__(message)
+        self.errors = list(errors)
+        self.warnings = list(warnings)
+
+
+class SealError(DesignError):
+    """A design record does not match its seal, or cannot be read: it is
+    not the design that was declared.
+
+    A DesignError, so code catching DesignError still catches it; its own
+    name singles out the one failure that puts the record's guarantee at
+    stake.
+    """
+
+
+class DesignWarning(UserWarning):
+    """A design was sealed with warnings; each is in the record and the report."""
 
 
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
-
-def _iso(ts):
-    """A timestamp as an ISO date, or date and time when it has one."""
-    ts = pd.Timestamp(ts)
-    return ts.date().isoformat() if ts == ts.normalize() else ts.isoformat()
-
 
 def _jsonable(value):
     """A typed argument in a form JSON holds, kept as close to verbatim as can be."""
@@ -227,6 +256,7 @@ class Design:
         self._plot_all = False
         self._starter_used = False
         self._frozen = False
+        self._declared_at = None
 
     # -- guards -------------------------------------------------------------
 
@@ -416,6 +446,7 @@ class Design:
         """
         resolved, findings = resolve(self)
         print(render_text(resolved))
+        _show(design_figure(resolved))
         return findings
 
     # -- internals ----------------------------------------------------------
@@ -851,7 +882,6 @@ def resolve(design):
     sw = seasonality
     resolved = {
         "label": design.series_label,
-        "output_path": os.path.join(design.output_dir, design.series_label),
         "data": {
             "date_col": design.date_col, "outcome_col": design.outcome_col,
             "covariate_cols": list(design.covariate_cols),
@@ -861,9 +891,6 @@ def resolve(design):
             "freq": dates.freqstr if dates is not None and dates.freq is not None else None,
         },
         "question": {"event_date": _iso(design.event_date), "H": design.horizon},
-        "seed": design.seed,
-        "starter_used": design._starter_used,
-        "exploration": exploration,
         "seasonality": None if sw is None else {
             "cycles": list(sw.cycles), "periods": dict(sw.periods),
             "declared": sw.declared},
@@ -893,7 +920,6 @@ def resolve(design):
                 "flags": list(f["space"].flags),
                 "m": f["m"],
             } for name, f in families.items()},
-        "candidates": candidates,
         "criteria": criteria,
         "check": {
             "n_origins": design._check["n_origins"],
@@ -910,10 +936,18 @@ def resolve(design):
         "sub_periods": {name: _window(w, None) for name, w in subs.items()},
         "seeds": {"bootstrap": derive_seed(design.seed, "bootstrap"),
                   **{c: v["seed"] for c, v in candidates.items()}},
-        "sweep_fits": sum(c["fits"] for c in candidates.values()),
-        "plot_all_combinations": design._plot_all,
+        "starter_used": design._starter_used,
+        "exploration": exploration,
         "issues": [f.to_dict() for f in findings],
-        "not_checked": _not_checked(design, dates, e, seasonality),
+        # What the report and the figure need beyond the declaration itself.
+        "report_fields": {
+            "output_path": os.path.join(design.output_dir, design.series_label),
+            "seed": design.seed,
+            "candidates": candidates,
+            "sweep_fits": sum(c["fits"] for c in candidates.values()),
+            "plot_all_combinations": design._plot_all,
+            "not_checked": _not_checked(design, dates, e, seasonality),
+        },
     }
     return resolved, findings
 
@@ -945,6 +979,7 @@ def render_text(resolved):
     Used by preview and by declare_design, so the two cannot differ.
     """
     r = resolved
+    rf = r["report_fields"]
     sw = r["seasonality"]
     cycle = None
     if sw and sw["cycles"]:
@@ -963,8 +998,8 @@ def render_text(resolved):
     if d["covariate_cols"]:
         add(f"  covariates   {', '.join(d['covariate_cols'])}")
     add(f"  event        {q['event_date']}   H = {q['H']} observations")
-    add(f"  seed         {r['seed']}")
-    add(f"  output       {r['output_path']}")
+    add(f"  seed         {rf['seed']}")
+    add(f"  output       {rf['output_path']}")
     add(f"  starter      {'used' if r['starter_used'] else 'not used'}")
     x = r["exploration"]
     if x is None:
@@ -1069,8 +1104,8 @@ def render_text(resolved):
             f" {c['basis']:<10} {state} (threshold {set_by}{sel_by})")
 
     add("")
-    add(f"SWEEP  {_count(len(r['candidates']), 'candidate')}, "
-        f"{_count(r['sweep_fits'], 'fit')} (per candidate: max(n_trials, 1) x folds, "
+    add(f"SWEEP  {_count(len(rf['candidates']), 'candidate')}, "
+        f"{_count(rf['sweep_fits'], 'fit')} (per candidate: max(n_trials, 1) x folds, "
         "plus one in-sample fit)")
 
     add("")
@@ -1084,23 +1119,218 @@ def render_text(resolved):
     for name, w in r["sub_periods"].items():
         add(f"  {name:<12} {_range(w)}  {w['n']} obs")
 
-    issues = r["issues"]
-    n_err = sum(i["level"] == "error" for i in issues)
-    n_warn = len(issues) - n_err
+    # A sealed record keeps its findings under "warnings": it can have no errors.
+    issues = r["issues"] if "issues" in r else r["warnings"]
     if issues:
         add("")
-        add(f"ISSUES  {_count(n_err, 'error')}, {_count(n_warn, 'warning')}")
-        for i in sorted(issues, key=lambda i: i["level"] != "error"):
-            add("")
-            add(f"{i['level'].upper():<8} {i['title']}")
-            add(_wrap(i["message"]))
-    if r["not_checked"]:
-        add("")
-        add("NOT CHECKED")
-        for nc in r["not_checked"]:
-            add(_wrap(f"{', '.join(nc['groups'])}: {nc['reason']}."))
-        add("  Fix the errors above and preview again.")
-    if n_err:
-        add("")
-        add(CLOSING_LINE)
+        add(f"ISSUES  {_tally(issues)}")
+    lines.extend(_issue_lines(issues, rf["not_checked"]))
     return "\n".join(lines)
+
+
+def report_text(resolved):
+    """The rendering, newline-terminated: exactly what preview prints, and
+    the report file's content above its sealing footer."""
+    return render_text(resolved) + "\n"
+
+
+def sealing_footer(record):
+    """When the design was sealed and which data it was sealed against.
+
+    Only declare_design writes it: preview cannot know the time, so preview
+    shows the report without this block.
+    """
+    fp = record["data"]["fingerprint"]
+    rows = fp["rows"]
+    return "\n".join([
+        "",
+        f"SEALED  {record['declared_at']}",
+        f"  data fingerprint  {fp['algorithm']} {fp['digest']}",
+        f"  covering {_count(rows['n'], 'row')}, {rows['first']} to {rows['last']}; "
+        f"columns {', '.join(fp['columns'])}",
+    ]) + "\n"
+
+
+def sealed_report(record):
+    """The report file's content: the rendering, then the sealing footer."""
+    return report_text(record) + sealing_footer(record)
+
+
+def _tally(issues):
+    n_err = sum(i["level"] == "error" for i in issues)
+    return f"{_count(n_err, 'error')}, {_count(len(issues) - n_err, 'warning')}"
+
+
+def _issue_lines(issues, not_checked):
+    """Every finding, errors first; what was not checked; the closing line
+    when nothing can be written. Shared by the rendering and DesignError."""
+    lines = []
+    for i in sorted(issues, key=lambda i: i["level"] != "error"):
+        lines.append("")
+        lines.append(f"{i['level'].upper():<8} {i['title']}")
+        lines.append(_wrap(i["message"]))
+    if not_checked:
+        lines.append("")
+        lines.append("NOT CHECKED")
+        for nc in not_checked:
+            lines.append(_wrap(f"{', '.join(nc['groups'])}: {nc['reason']}."))
+        lines.append("  Fix the errors above and preview again.")
+    if any(i["level"] == "error" for i in issues):
+        lines.append("")
+        lines.append(CLOSING_LINE)
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Step 0: declare_design
+# ---------------------------------------------------------------------------
+
+def _show(fig):
+    """Show a figure where the analyst can see it: inline in a notebook or
+    IPython session. A plain script has no display to show it on; the
+    figure is written to disk by declare_design."""
+    if fig is None:
+        return
+    try:
+        from IPython import get_ipython
+        from IPython.display import display
+    except ImportError:
+        return
+    if get_ipython() is not None:
+        display(fig)
+
+
+def _sealed_on(label_dir):
+    """The date an existing label was sealed: from its design record, else
+    the directory's modification time."""
+    try:
+        with open(os.path.join(label_dir, RECORD_DIR, RECORD_FILE), encoding="utf-8") as fh:
+            return json.load(fh)["declared_at"][:10]
+    except (OSError, ValueError, KeyError, TypeError):
+        mtime = os.path.getmtime(label_dir)
+        return datetime.fromtimestamp(mtime, tz=timezone.utc).date().isoformat()
+
+
+def _suggest_label(label):
+    """A new label for redeclaring: the old one plus today's date."""
+    return f"{label}_{date.today():%Y%m%d}"
+
+
+def _refuse_existing_label(output_dir, label):
+    label_dir = os.path.join(output_dir, label)
+    if not os.path.exists(label_dir):
+        return
+    suggestion = _suggest_label(label)
+    raise DesignError(
+        f"this design cannot be sealed: the label {label!r} already exists at "
+        f"{label_dir}, sealed on {_sealed_on(label_dir)}. One label is one sealed "
+        f"declaration; declare again under a new label, for example {suggestion!r}.\n\n"
+        + CLOSING_LINE,
+        errors=[Finding("error", "label", f"{label!r} already exists")])
+
+
+def _design_error(resolved, findings):
+    errors = [f for f in findings if f.level == "error"]
+    warns = [f for f in findings if f.level == "warning"]
+    issues = [f.to_dict() for f in findings]
+    message = "\n".join([f"this design cannot be sealed. {_tally(issues)}.",
+                         *_issue_lines(issues, resolved["report_fields"]["not_checked"])])
+    return DesignError(message, errors=errors, warnings=warns)
+
+
+def _write_label(label_dir, record, report, fig):
+    """Write the record, report and figure, read-only, under a new label
+    directory in one move.
+
+    Everything is written into a hidden directory beside the label and
+    renamed into place only when complete, so a failure part-way leaves no
+    half-written label to block the retry.
+    """
+    parent = os.path.dirname(label_dir) or "."
+    os.makedirs(parent, exist_ok=True)
+    tmp = os.path.join(parent, f".{os.path.basename(label_dir)}.partial-{uuid.uuid4().hex}")
+    os.mkdir(tmp)
+    try:
+        sub = os.path.join(tmp, RECORD_DIR)
+        os.mkdir(sub)
+        with open(os.path.join(sub, RECORD_FILE), "w", encoding="utf-8") as fh:
+            fh.write(record_json(record))
+        with open(os.path.join(sub, REPORT_FILE), "w", encoding="utf-8") as fh:
+            fh.write(report)
+        if fig is not None:
+            fig.savefig(os.path.join(sub, PLOT_FILE), dpi=120, bbox_inches="tight")
+        for name in os.listdir(sub):
+            os.chmod(os.path.join(sub, name), 0o444)
+        os.rename(tmp, label_dir)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+
+
+def declare_design(design):
+    """Step 0: validate, render and seal a design, and write its record.
+
+    In order: refuse an existing label before anything else; resolve and
+    validate the whole design, and stop with one grouped report if any
+    error is found; print the report; fingerprint the data, stamp the
+    declaration time, build and seal the record; write the record, report
+    and figure under output_dir/series_label/00_design/ in one atomic move.
+    Nothing here fits a model. The design is frozen afterwards.
+
+    Parameters
+    ----------
+    design : Design
+
+    Returns
+    -------
+    DesignRecord
+        The sealed record; step 1 accepts nothing else.
+
+    Raises
+    ------
+    DesignError
+        The label exists, or the design has errors. Nothing is written.
+
+    Warns
+    -----
+    DesignWarning
+        Once, summarising the warnings, when there are any. Each is in the
+        record and the report in full.
+    """
+    if not isinstance(design, Design):
+        raise TypeError(f"declare_design takes a Design; got {type(design).__name__}.")
+    if design._frozen:
+        raise FrozenDesignError(
+            f"This design was already declared as {design.series_label!r} on "
+            f"{design._declared_at[:10]}. To declare again, build a new Design with a "
+            f"new series_label, for example {_suggest_label(design.series_label)!r}.")
+    _refuse_existing_label(design.output_dir, design.series_label)
+
+    resolved, findings = resolve(design)
+    if any(f.level == "error" for f in findings):
+        raise _design_error(resolved, findings)
+
+    report = report_text(resolved)
+    print(report, end="")
+
+    end = resolved["sub_periods"]["full_window"]["end"]
+    fp = fingerprint(design.data, design.date_col,
+                     [design.outcome_col, *design.covariate_cols], end)
+    declared_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    record = build_record(resolved, fp, declared_at, __version__)
+    footer = sealing_footer(record)
+
+    label_dir = resolved["report_fields"]["output_path"]
+    _write_label(label_dir, record, report + footer, design_figure(resolved))
+    print(footer, end="")
+    design._frozen = True
+    design._declared_at = declared_at
+
+    warns = [f for f in findings if f.level == "warning"]
+    if warns:
+        titles = ", ".join(dict.fromkeys(f.title for f in warns))
+        warnings.warn(f"The design was sealed with {_count(len(warns), 'warning')} "
+                      f"({titles}); each is in the record and the report.",
+                      DesignWarning, stacklevel=2)
+    return DesignRecord.from_dict(record, path=os.path.join(label_dir, RECORD_DIR,
+                                                              RECORD_FILE))

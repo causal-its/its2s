@@ -274,7 +274,7 @@ class TestNotChecked:
         d.add_split("bad", train_obs=500, test_obs=52)
         d.add_sub_period("acute", "2026-06-25", "2026-07-08")
         resolved, _ = resolve(d)
-        groups = [g for nc in resolved["not_checked"] for g in nc["groups"]]
+        groups = [g for nc in resolved["report_fields"]["not_checked"] for g in nc["groups"]]
         for g in ("splits", "cross-validation", "check origins", "sub-periods"):
             assert g in groups
         text = render_text(resolved)
@@ -286,14 +286,14 @@ class TestNotChecked:
         df = _frame().drop(index=[10, 11])          # a gap: no regular grid
         d = _minimal(_design(df=df))
         resolved, _ = resolve(d)
-        groups = [g for nc in resolved["not_checked"] for g in nc["groups"]]
+        groups = [g for nc in resolved["report_fields"]["not_checked"] for g in nc["groups"]]
         assert "seasonality" in groups and "family search spaces" in groups
-        assert "date grid" in resolved["not_checked"][0]["reason"]
+        assert "date grid" in resolved["report_fields"]["not_checked"][0]["reason"]
         assert "NOT CHECKED" in render_text(resolved)
 
     def test_valid_design_has_no_section(self):
         resolved, _ = resolve(_minimal(_design()))
-        assert resolved["not_checked"] == []
+        assert resolved["report_fields"]["not_checked"] == []
         assert "NOT CHECKED" not in render_text(resolved)
 
 
@@ -601,7 +601,7 @@ class TestSweepAndSeeds:
         d.add_family("arima", n_trials=0)
         resolved, _ = resolve(d)
         # prophet_xgb: 10 x 2 folds + 1; arima: max(0, 1) x 2 folds + 1.
-        assert resolved["sweep_fits"] == 21 + 3
+        assert resolved["report_fields"]["sweep_fits"] == 21 + 3
 
     def test_seeds_are_derived_and_independent(self):
         from its2s.seeds import derive_seed
