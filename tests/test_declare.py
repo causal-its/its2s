@@ -208,8 +208,9 @@ class TestRefusal:
             declare_design({"series_label": "x"})
 
 
-def test_no_fit_is_reachable(tmp_path, monkeypatch):
-    """A failed declaration costs no fits, and a sealed one runs none."""
+@pytest.fixture
+def fits_refused(monkeypatch):
+    """Every loadable family class's fit raises, so any fit step 0 reached fails."""
     patched = 0
     for name, spec in FAMILIES.items():
         if spec.status == "withheld":
@@ -224,10 +225,106 @@ def test_no_fit_is_reachable(tmp_path, monkeypatch):
         monkeypatch.setattr(cls, "fit", refuse)
         patched += 1
     assert patched >= 1
+
+
+def test_no_fit_is_reachable(tmp_path, fits_refused):
+    """A failed declaration costs no fits, and a sealed one runs none."""
     with pytest.raises(DesignError):
         _declare(_failing(tmp_path / "failed"))
     assert not (tmp_path / "failed").exists()
     _declare(_contract_example(_design(tmp=tmp_path / "sealed")))
+
+
+def _daily(tmp, cycles=None):
+    df = _frame(start="2023-01-01", periods=1300, freq="D")
+    d = Design(df, "week", "deaths", None, "2026-06-01", 7, 1, tmp, LABEL)
+    if cycles:
+        d.set_seasonality(cycles=cycles)
+    d.add_split("sp1", test_obs=60)
+    d.add_cv("cv1", n_folds=3, fold_eval_obs=7)
+    d.add_family("arima", n_trials=10)
+    return d
+
+
+def _with(build, *calls):
+    """A design from build(tmp), then each (method, args, kwargs) applied to it."""
+    def make(tmp):
+        d = build(tmp)
+        for method, args, kwargs in calls:
+            getattr(d, method)(*args, **kwargs)
+        return d
+    return make
+
+
+def _base(tmp):
+    return _minimal(_design(tmp=tmp))
+
+
+def _bare(tmp):
+    d = _design(tmp=tmp)
+    d.add_split("sp1", train_obs=129, test_obs=52)
+    d.add_cv("cv1", n_folds=2, fold_eval_obs=11)
+    d.add_family("prophet_xgb", n_trials=10)
+    return d
+
+
+def _capacity(tmp):
+    """Five check origins at H=11 need 55 test rows; sp1 has 52."""
+    d = _design(H=11, tmp=tmp)
+    d.add_split("sp1", train_obs=129, test_obs=52)
+    d.add_cv("cv1", n_folds=2, fold_eval_obs=11)
+    d.add_family("prophet_xgb", n_trials=10)
+    d.set_check(n_origins=5)
+    return d
+
+
+# One design for each way a declaration fails inside declare_design. Misuse
+# that raises at the add_ call itself (add_cv(gap=1) is a TypeError) fails
+# before any declaration exists, so no fit could follow it either.
+FAILING = {
+    "duplicate split and thin folds": (_failing, "duplicate split"),
+    "off-grid train_end": (_with(
+        _base, ("add_split", ("sp2",), {"train_end": "2025-09-14", "primary": True})),
+        "2025-09-08 and 2025-09-15"),
+    "off-grid train_start": (_with(
+        _base, ("add_split", ("sp2",), {"train_obs": 100, "train_start": "2024-01-03",
+                                         "primary": True})),
+        "2024-01-01 and 2024-01-08"),
+    "train_start at the test start": (_with(
+        _base, ("add_split", ("sp2",), {"train_end": "2025-06-16",
+                                         "train_start": "2025-06-23", "primary": True})),
+        "at or after the start of the test window"),
+    "check capacity": (_capacity, "at least 55 rows"),
+    "neuralprophet withheld": (_with(
+        _base, ("add_family", ("neuralprophet",), {"n_trials": 10})), "issue 53"),
+    "n_trials 1": (_with(_base, ("add_family", ("arima",), {"n_trials": 1})),
+                   "1 is refused"),
+    "arima weekly and annual": (lambda tmp: _daily(tmp, ["weekly", "annual"]),
+                                "one seasonal period"),
+    "arima annual on daily": (_daily, "cannot carry the annual"),
+    "arima capacity": (_with(
+        _bare, ("add_cv", ("cv2",), {"n_folds": 4, "fold_eval_obs": 13}),
+        ("add_family", ("arima",), {"n_trials": 10})), "sp1/cv2 (77 rows)"),
+    "s5 not two-sided": (_with(_base, ("set_criteria", (), {"S5": (2.0, 0.5)})),
+                         "two-sided"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(FAILING))
+def test_every_failing_design_costs_no_fits(tmp_path, fits_refused, case):
+    build, expected = FAILING[case]
+    out = tmp_path / "out"
+    with pytest.raises(DesignError) as info:
+        _declare(build(out))
+    assert expected in str(info.value)
+    assert not out.exists() or _files(out) == []
+
+
+def test_existing_label_costs_no_fits(tmp_path, fits_refused):
+    (tmp_path / LABEL).mkdir()
+    with pytest.raises(DesignError, match="already exists"):
+        _declare(_contract_example(_design(tmp=tmp_path)))
+    assert _files(tmp_path) == [LABEL]
 
 
 # ---------------------------------------------------------------------------
