@@ -11,12 +11,12 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, field
-from types import MappingProxyType
 
 import pandas as pd
 
+from .records import SEAL_ALGORITHM, freeze, seal_matches, seal_record
+
 SCHEMA_VERSION = 1
-SEAL_ALGORITHM = "sha256"
 RECORD_DIR = "00_design"
 RECORD_FILE = "00-design.json"
 REPORT_FILE = "00-design_report.txt"
@@ -85,33 +85,6 @@ def fingerprint(data, date_col, value_cols, end):
                  "n": int(keep.sum())},
         "columns": [date_col, *value_cols],
     }
-
-
-# ---------------------------------------------------------------------------
-# Seal
-# ---------------------------------------------------------------------------
-
-def _canonical(record):
-    """The record's content as one fixed byte string, seal excluded.
-
-    Sorted keys and no whitespace, so re-indenting the file does not break
-    the seal while any change to a value does.
-    """
-    body = {k: v for k, v in record.items() if k != "seal"}
-    return json.dumps(body, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=True, allow_nan=False).encode("ascii")
-
-
-def seal_digest(record):
-    """The hash that seals a record."""
-    return hashlib.sha256(_canonical(record)).hexdigest()
-
-
-def seal_matches(record):
-    """True when the record's seal is the hash of its own content."""
-    seal = record.get("seal")
-    return (isinstance(seal, dict) and seal.get("algorithm") == SEAL_ALGORITHM
-            and seal.get("digest") == seal_digest(record))
 
 
 # ---------------------------------------------------------------------------
@@ -207,22 +180,7 @@ def build_record(resolved, fp, declared_at, package_version):
         "handoff": build_handoff(resolved, fp),
         "report_fields": resolved["report_fields"],
     }
-    record["seal"] = {"algorithm": SEAL_ALGORITHM, "digest": seal_digest(record)}
-    return record
-
-
-def record_json(record):
-    """The record as written to disk."""
-    return json.dumps(record, indent=2, ensure_ascii=True, allow_nan=False) + "\n"
-
-
-def _freeze(value):
-    """A read-only copy: dicts become mapping proxies, lists tuples."""
-    if isinstance(value, dict):
-        return MappingProxyType({k: _freeze(v) for k, v in value.items()})
-    if isinstance(value, list):
-        return tuple(_freeze(v) for v in value)
-    return value
+    return seal_record(record)
 
 
 def _record_path(path):
@@ -281,7 +239,7 @@ class DesignRecord:
                 "edited since it was declared, so it is not the design that was "
                 "sealed. Declare again under a new label.")
         names = [f for f in cls.__dataclass_fields__ if f not in ("path", "_json")]
-        return cls(**{n: _freeze(record[n]) for n in names}, path=path,
+        return cls(**{n: freeze(record[n]) for n in names}, path=path,
                    _json=json.dumps(record))
 
     @classmethod
