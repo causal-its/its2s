@@ -16,7 +16,10 @@ import pandas as pd
 
 from .records import SEAL_ALGORITHM, freeze, seal_matches, seal_record
 
-SCHEMA_VERSION = 1
+# Version 2 added S4, S5 and per-fold coverage to each combination of the
+# handoff, and each criterion's threshold_defaulted, so step 1 reads the
+# handoff only.
+SCHEMA_VERSION = 2
 RECORD_DIR = "00_design"
 RECORD_FILE = "00-design.json"
 REPORT_FILE = "00-design_report.txt"
@@ -126,10 +129,14 @@ def build_handoff(resolved, fp):
                   "test": _bounds(s["test"]),
                   "post_event": _bounds(s["post_event"])}
             for sid, s in r["splits"].items()},
+        # S4 and S5 are sealed facts of each combination; step 1 copies them
+        # rather than recomputing them, with each fold's coverage beside them.
         "combinations": {
             key: {"split": c["split"], "cv": c["cv"],
                   "folds": [{"k": f["k"], "train": _bounds(f["train"]),
-                             "evaluate": _bounds(f["evaluate"])} for f in c["folds"]]}
+                             "evaluate": _bounds(f["evaluate"]),
+                             "cycles": f["train"]["cycles"]} for f in c["folds"]],
+                  "S4": dict(c["S4"]), "S5": dict(c["S5"])}
             for key, c in r["combinations"].items()},
         # m is the seasonal period the family fits at (arima only), so a
         # later step uses the period this record was sealed with rather than
@@ -144,7 +151,8 @@ def build_handoff(resolved, fp):
         # op is recorded for the same reason: each criterion is judged by the
         # comparison it was sealed under.
         "criteria": {cid: {"selected": c["selected"], "op": c["op"],
-                           "threshold": c["threshold"]}
+                           "threshold": c["threshold"],
+                           "threshold_defaulted": c["threshold_defaulted"]}
                      for cid, c in r["criteria"].items()},
         "origins": {sid: {"dates": list(o["dates"]), "phase_origin": o["phase_origin"]}
                     for sid, o in r["check"]["splits"].items()},

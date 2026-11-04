@@ -351,7 +351,7 @@ class TestRecord:
         assert set(raw["report_fields"]) == {"output_path", "seed", "candidates",
                                              "sweep_fits", "plot_all_combinations",
                                              "not_checked"}
-        assert raw["schema_version"] == 1
+        assert raw["schema_version"] == 2
         assert raw["package_version"] == its2s.__version__
         assert raw["seal"]["algorithm"] == "sha256"
 
@@ -479,16 +479,37 @@ class TestHandoff:
 
     def test_criteria_origins_sub_periods(self, record):
         h = record["handoff"]
-        assert h["criteria"]["S2"] == {"selected": False, "op": "<=", "threshold": 1.5}
-        assert h["criteria"]["S4"] == {"selected": True, "op": ">=", "threshold": 2.0}
+        assert h["criteria"]["S2"] == {"selected": False, "op": "<=", "threshold": 1.5,
+                                       "threshold_defaulted": True}
+        assert h["criteria"]["S4"] == {"selected": True, "op": ">=", "threshold": 2.0,
+                                       "threshold_defaulted": True}
         assert h["criteria"]["S5"] == {"selected": False, "op": "band",
-                                       "threshold": [0.5, 2.0]}
+                                       "threshold": [0.5, 2.0],
+                                       "threshold_defaulted": True}
         assert len(h["origins"]["sp1"]["dates"]) == 4
         assert set(h["sub_periods"]) == {"full_window", "acute"}
         assert h["sub_periods"]["full_window"]["n"] == 3
 
     def test_output_path(self, record, tmp_path):
         assert record["handoff"]["output_path"] == os.path.join(str(tmp_path), LABEL)
+
+    def test_combinations_carry_s4_s5_and_fold_coverage(self, record):
+        """Step 1 copies these sealed facts from the handoff, so they must
+        be there and equal to what the record body states."""
+        for key, combo in record["handoff"]["combinations"].items():
+            body = record["combinations"][key]
+            assert combo["S4"] == body["S4"]
+            assert combo["S5"] == body["S5"]
+            assert [f["cycles"] for f in combo["folds"]] == [
+                f["train"]["cycles"] for f in body["folds"]]
+            assert combo["S4"]["value"] == combo["folds"][0]["cycles"]
+
+    def test_criteria_carry_whether_the_threshold_was_set(self, tmp_path):
+        d = _contract_example(_design(tmp=tmp_path))
+        d.set_criteria(S3=2.5)
+        h = _declare(d).to_dict()["handoff"]
+        assert h["criteria"]["S3"]["threshold_defaulted"] is False
+        assert h["criteria"]["S2"]["threshold_defaulted"] is True
 
 
 # ---------------------------------------------------------------------------

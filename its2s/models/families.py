@@ -79,6 +79,10 @@ class FamilySpec:
     search_space: dict
     starter_n_trials: int             # matches the R reference grid sizes
     class_path: tuple                 # (module, class name), imported on demand
+    # Where the family's own random seed goes in its nested params, or None
+    # when nothing in its fit draws at random. Step 1 sets it to each
+    # candidate's derived seed; the old run path leaves the library default.
+    seed_param: tuple | None = None
 
 
 FAMILIES = {
@@ -100,6 +104,8 @@ FAMILIES = {
         search_space=_PROPHET_XGB_SPACE,
         starter_n_trials=100,
         class_path=(".prophet_xgb", "ProphetXGBHybridModel"),
+        # XGBoost subsamples rows and columns for each tree.
+        seed_param=("xgb", "random_state"),
     ),
     "arima": FamilySpec(
         name="arima",

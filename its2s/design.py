@@ -742,6 +742,19 @@ def _resolve_combinations(design, splits, seasonality, criteria, findings):
     return combos
 
 
+def _candidate_fits(n_trials, n_folds):
+    """Fits step 1 runs for one candidate.
+
+    A search scores every setting on every fold and the default
+    configuration on every fold as a reference, then fits the chosen
+    setting once on the whole training window. With no search the default
+    configuration is the setting, so it is scored once.
+    """
+    if n_trials == 0:
+        return n_folds + 1
+    return n_trials * n_folds + n_folds + 1
+
+
 def _verdict(entry, value):
     if value is None:
         return "not applicable"
@@ -930,7 +943,7 @@ def resolve(design):
                 "family": name, "split": combo["split"], "cv": combo["cv"],
                 "n_trials": fam["n_trials"],
                 "seed": derive_seed(design.seed, cand),
-                "fits": max(fam["n_trials"], 1) * len(combo["folds"]) + 1,
+                "fits": _candidate_fits(fam["n_trials"], len(combo["folds"])),
             }
 
     sw = seasonality
@@ -1159,8 +1172,9 @@ def render_text(resolved):
 
     add("")
     add(f"SWEEP  {_count(len(rf['candidates']), 'candidate')}, "
-        f"{_count(rf['sweep_fits'], 'fit')} (per candidate: max(n_trials, 1) x folds, "
-        "plus one in-sample fit)")
+        f"{_count(rf['sweep_fits'], 'fit')} (per candidate: n_trials x folds, plus "
+        "folds for the default-configuration reference when searching, plus one "
+        "in-sample fit)")
 
     add("")
     add("SEEDS  (derived from the master seed and each id)")
