@@ -77,6 +77,67 @@ def freeze(value):
     return value
 
 
+class SealedRecord:
+    """Reading and verifying a sealed step record; shared by every step.
+
+    A subclass is a frozen dataclass whose fields are the record's top-level
+    keys plus path and _json, and which sets the class attributes below.
+    Nested sections are read-only mappings and tuples; to_dict() returns a
+    fresh plain copy.
+    """
+
+    KIND = ""            # "design", "candidates": names the record in messages
+    RECORD_DIR = ""      # the step's directory under the label
+    RECORD_FILE = ""     # the record file in it
+    SEALED_WHEN = ""     # "declared": what made the record
+    REDO = ""            # what to do instead of using an edited record
+
+    @classmethod
+    def record_path(cls, path):
+        """Accept the record file, its step directory, or the label directory."""
+        path = os.fspath(path)
+        if os.path.isdir(os.path.join(path, cls.RECORD_DIR)):
+            path = os.path.join(path, cls.RECORD_DIR)
+        if os.path.isdir(path):
+            path = os.path.join(path, cls.RECORD_FILE)
+        return path
+
+    @classmethod
+    def from_dict(cls, record, path=None):
+        """The record from a dict; raises SealError if the seal does not
+        match the content."""
+        from .design import SealError
+        if not seal_matches(record):
+            where = f" at {path}" if path else ""
+            raise SealError(
+                f"The {cls.KIND} record{where} does not match its seal: it has been "
+                f"edited since it was {cls.SEALED_WHEN}, so it is not the {cls.KIND} "
+                f"that was sealed. {cls.REDO}")
+        names = [f for f in cls.__dataclass_fields__ if f not in ("path", "_json")]
+        return cls(**{n: freeze(record[n]) for n in names}, path=path,
+                   _json=json.dumps(record))
+
+    @classmethod
+    def load(cls, path):
+        """Read and verify a record from the file, its step directory, or the
+        label directory that holds it."""
+        from .design import SealError
+        file = cls.record_path(path)
+        try:
+            with open(file, encoding="utf-8") as fh:
+                record = json.load(fh)
+        except FileNotFoundError:
+            raise SealError(f"No {cls.KIND} record at {file}.") from None
+        except json.JSONDecodeError as e:
+            raise SealError(f"The {cls.KIND} record at {file} is not valid JSON ({e}); "
+                            f"it has been edited since it was {cls.SEALED_WHEN}.") from None
+        return cls.from_dict(record, path=file)
+
+    def to_dict(self):
+        """A fresh, mutable copy of the record as JSON values."""
+        return json.loads(self._json)
+
+
 @contextmanager
 def atomic_directory(target):
     """Build a new directory in full, then move it into place in one step.

@@ -8,10 +8,15 @@
 #   Everything is read from the design record's HANDOFF section and the data;
 #   no other field of the design is reachable from here, and nothing here
 #   touches the file system.
-# Usage: from its2s.screening import screen, screen_candidate
+#   screen_models is the public step: it verifies the sealed design and the
+#   data, refuses or checks a repeat run, then screens, seals and writes the
+#   candidates record and its report.
+# Usage: candidates = its2s.screen_models(declared, data=df)
+#        from its2s.screening import screen, screen_candidate
 # Dependencies: numpy, pandas
 
 import logging
+import os
 import time
 import traceback
 import warnings
@@ -21,11 +26,17 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from .design import _verdict
+from . import __version__
+from .candidates_record import (RECORD_DIR, REPORT_FILE, CandidatesRecord,
+                                build_record)
+from .design import _count, _verdict
+from .design_record import SCHEMA_VERSION as DESIGN_SCHEMA_VERSION
+from .design_record import DesignRecord, fingerprint
 from .folds import longest_cycle
 from .frequency import SeriesFrequency
 from .metrics.error_metrics import compute_metrics
 from .models.families import get_family, load_family_class, resolve_space
+from .records import atomic_directory, canonical_json, record_json
 from .search import nest_params, sample_settings
 from .seasonality import make_seasonality
 from .settings import _deep_merge
@@ -451,3 +462,136 @@ def screen(handoff, data):
                          "n_passed_all": len(passing)},
         "facts": {"lowest_mean_cv_rmse": lowest, "passing_all_applicable": passing},
     }
+
+
+# ---------------------------------------------------------------------------
+# The public step
+# ---------------------------------------------------------------------------
+
+class ScreeningError(ValueError):
+    """screen_models stopped before fitting anything, or a rerun did not
+    reproduce the sealed record. A ValueError, like DesignError."""
+
+
+def _verify_design(declared):
+    if not isinstance(declared, DesignRecord):
+        raise TypeError(
+            f"screen_models takes the DesignRecord that declare_design returned, or "
+            f"one read with DesignRecord.load; got {type(declared).__name__}.")
+    if declared.schema_version != DESIGN_SCHEMA_VERSION:
+        raise ScreeningError(
+            f"This design record is schema version {declared.schema_version}; this "
+            f"package screens version {DESIGN_SCHEMA_VERSION}, whose handoff carries "
+            "the S4, S5 and coverage facts screening reads. Declare the design again "
+            "under a new label.")
+
+
+def _verify_data(handoff, data):
+    """The data must be the data the design was sealed against."""
+    d = handoff["data"]
+    cols = [d["outcome_col"], *d["covariate_cols"]]
+    missing = [c for c in [d["date_col"], *cols] if c not in data.columns]
+    if missing:
+        raise ScreeningError(f"The data has no column(s) {missing}; the design was "
+                             f"sealed on {[d['date_col'], *cols]}.")
+    fp = fingerprint(data, d["date_col"], cols, handoff["sub_periods"]["full_window"]["end"])
+    if fp["digest"] != d["fingerprint"]:
+        rows, sealed = fp["rows"], d["rows"]
+        raise ScreeningError(
+            f"The data does not match the design's fingerprint. Sealed: {d['fingerprint']} "
+            f"over {sealed['n']} rows, {sealed['first']} to {sealed['last']}. Given: "
+            f"{fp['digest']} over {rows['n']} rows, {rows['first']} to {rows['last']}. "
+            "Nothing has been fit.")
+    return fp
+
+
+def _minutes(start, end):
+    seconds = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()
+    return max(1, round(seconds / 60))
+
+
+def _refuse_rerun(existing, label):
+    m = existing.multiplicity
+    raise ScreeningError(
+        f"{label} was screened on {existing.sealed_at[:10]}: "
+        f"{m['n_candidates']} candidates, {m['n_fits']} fits, "
+        f"{_count(_minutes(existing.screening_started_at, existing.sealed_at), 'minute')}. To "
+        "recompute every candidate and check that each reproduces its sealed entry, "
+        "call again with rerun=True. Nothing has been fit.")
+
+
+def _check_rerun(existing, body, label):
+    """Keep the sealed record if every candidate reproduced; else raise."""
+    sealed = existing.to_dict()["candidates"]
+    differ = [cid for cid in sorted(set(sealed) | set(body["candidates"]))
+              if cid not in sealed or cid not in body["candidates"]
+              or canonical_json(sealed[cid]) != canonical_json(body["candidates"][cid])]
+    if differ:
+        raise ScreeningError(
+            f"Rerunning {label} did not reproduce its sealed candidates record: "
+            f"{', '.join(differ)} differ. Nothing was written. The same sealed design "
+            "on the same data must give the same candidates, so this is a "
+            "reproducibility failure to investigate, not a newer answer.")
+    logger.info("rerun of %s reproduced all %d candidates; the sealed record is kept",
+                label, len(sealed))
+    return existing
+
+
+def screen_models(declared, data, rerun=False):
+    """Step 1: screen every declared candidate on the training window only.
+
+    In order: check the design record and that the data is the data it was
+    sealed against; if this label was already screened, refuse (rerun=False)
+    or recompute and require every candidate to reproduce its sealed entry
+    (rerun=True); otherwise screen, seal the candidates record, print its
+    report, and write both read-only under the label's 01_screening/
+    directory in one move.
+
+    Parameters
+    ----------
+    declared : DesignRecord
+        From declare_design, or DesignRecord.load.
+    data : pd.DataFrame
+        The series the design was declared on.
+    rerun : bool
+        Only matters when the label was already screened; see above.
+
+    Returns
+    -------
+    CandidatesRecord
+
+    Raises
+    ------
+    ScreeningError
+        Before any fit when the record or the data does not match, or when
+        the label was already screened and rerun is False; after the
+        recomputation when a rerun does not reproduce.
+    """
+    _verify_design(declared)
+    design = declared.to_dict()
+    handoff = design["handoff"]
+    label = design["label"]
+    fp = _verify_data(handoff, data)
+
+    target = os.path.join(handoff["output_path"], RECORD_DIR)
+    existing = CandidatesRecord.load(target) if os.path.exists(target) else None
+    if existing is not None and not rerun:
+        _refuse_rerun(existing, label)
+
+    started_at = utc_now()
+    body = screen(handoff, data)
+    if existing is not None:
+        return _check_rerun(existing, body, label)
+
+    record = build_record(design, fp, body, started_at, utc_now(), __version__)
+    result = CandidatesRecord.from_dict(record)
+    report = result.report()
+    with atomic_directory(target) as tmp:
+        with open(os.path.join(tmp, CandidatesRecord.RECORD_FILE), "w",
+                  encoding="utf-8") as fh:
+            fh.write(record_json(record))
+        with open(os.path.join(tmp, REPORT_FILE), "w", encoding="utf-8") as fh:
+            fh.write(report)
+    print(report, end="")
+    return CandidatesRecord.from_dict(
+        record, path=os.path.join(target, CandidatesRecord.RECORD_FILE))

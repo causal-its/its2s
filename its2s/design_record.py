@@ -8,13 +8,11 @@
 # Dependencies: numpy, pandas
 
 import hashlib
-import json
-import os
 from dataclasses import dataclass, field
 
 import pandas as pd
 
-from .records import SEAL_ALGORITHM, freeze, seal_matches, seal_record
+from .records import SEAL_ALGORITHM, SealedRecord, seal_record
 
 # Version 2 added S4, S5 and per-fold coverage to each combination of the
 # handoff, and each criterion's threshold_defaulted, so step 1 reads the
@@ -191,18 +189,8 @@ def build_record(resolved, fp, declared_at, package_version):
     return seal_record(record)
 
 
-def _record_path(path):
-    """Accept the record file, its 00_design directory, or the label directory."""
-    path = os.fspath(path)
-    if os.path.isdir(os.path.join(path, RECORD_DIR)):
-        path = os.path.join(path, RECORD_DIR)
-    if os.path.isdir(path):
-        path = os.path.join(path, RECORD_FILE)
-    return path
-
-
 @dataclass(frozen=True)
-class DesignRecord:
+class DesignRecord(SealedRecord):
     """A sealed design record, read-only.
 
     Built from the JSON on disk (load) or from the dict declare_design
@@ -210,6 +198,12 @@ class DesignRecord:
     sections are read-only mappings and tuples; to_dict() returns a fresh
     plain copy.
     """
+
+    KIND = "design"
+    RECORD_DIR = RECORD_DIR
+    RECORD_FILE = RECORD_FILE
+    SEALED_WHEN = "declared"
+    REDO = "Declare again under a new label."
 
     schema_version: int
     package_version: str
@@ -234,44 +228,6 @@ class DesignRecord:
     report_fields: object
     path: str | None = None
     _json: str = field(default="", repr=False, compare=False)
-
-    @classmethod
-    def from_dict(cls, record, path=None):
-        """A DesignRecord from a record dict; raises SealError if the seal
-        does not match the content."""
-        from .design import SealError
-        if not seal_matches(record):
-            where = f" at {path}" if path else ""
-            raise SealError(
-                f"The design record{where} does not match its seal: it has been "
-                "edited since it was declared, so it is not the design that was "
-                "sealed. Declare again under a new label.")
-        names = [f for f in cls.__dataclass_fields__ if f not in ("path", "_json")]
-        return cls(**{n: freeze(record[n]) for n in names}, path=path,
-                   _json=json.dumps(record))
-
-    @classmethod
-    def load(cls, path):
-        """Read and verify a design record.
-
-        path may be the record file, its 00_design directory, or the label
-        directory that holds it.
-        """
-        from .design import SealError
-        file = _record_path(path)
-        try:
-            with open(file, encoding="utf-8") as fh:
-                record = json.load(fh)
-        except FileNotFoundError:
-            raise SealError(f"No design record at {file}.") from None
-        except json.JSONDecodeError as e:
-            raise SealError(f"The design record at {file} is not valid JSON ({e}); "
-                              "it has been edited since it was declared.") from None
-        return cls.from_dict(record, path=file)
-
-    def to_dict(self):
-        """A fresh, mutable copy of the record as JSON values."""
-        return json.loads(self._json)
 
     def report(self):
         """The text report, exactly as written to 00-design_report.txt."""
