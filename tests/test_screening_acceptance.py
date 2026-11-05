@@ -23,6 +23,7 @@ import warnings
 import pandas as pd
 import pytest
 
+import its2s.fitting as fitting
 import its2s.screening as screening
 from its2s import CandidatesRecord, screen_models
 from its2s.candidates_record import RECORD_DIR
@@ -126,14 +127,24 @@ def _calls_to(tree, attr):
     return found
 
 
+# Every workflow module that fits a model. Each step that fits must be
+# listed here, so the stamping rule below covers it.
+_FITTING_MODULES = (fitting, screening)
+
+
 def test_only_the_stamping_helper_reaches_a_family_fit():
-    """Structural: every .fit( call in screening is inside _fit, after the tick."""
-    tree = ast.parse(inspect.getsource(screening))
+    """Structural: the one .fit( call in the workflow is inside
+    fitting.fit_family, after the tick; no other workflow module fits."""
+    tree = ast.parse(inspect.getsource(fitting))
     fits = _calls_to(tree, "fit")
-    assert fits and {name for name, _ in fits} == {"_fit"}
+    assert fits and {name for name, _ in fits} == {"fit_family"}
     (fit_line,) = [line for _, line in fits]
-    ticks = [line for name, line in _calls_to(tree, "tick") if name == "_fit"]
+    ticks = [line for name, line in _calls_to(tree, "tick") if name == "fit_family"]
     assert ticks and max(ticks) < fit_line
+    for module in _FITTING_MODULES:
+        if module is not fitting:
+            assert _calls_to(ast.parse(inspect.getsource(module)), "fit") == [], \
+                module.__name__
 
 
 def test_no_fit_starts_before_first_fit_at(tmp_path, monkeypatch):

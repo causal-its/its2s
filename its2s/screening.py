@@ -21,7 +21,7 @@ import time
 import traceback
 import warnings
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -31,14 +31,14 @@ from .candidates_record import (RECORD_DIR, REPORT_FILE, CandidatesRecord,
                                 build_record)
 from .design import _count, _verdict
 from .design_record import SCHEMA_VERSION as DESIGN_SCHEMA_VERSION
-from .design_record import DesignRecord, fingerprint
-from .folds import longest_cycle
-from .frequency import SeriesFrequency
+from .design_record import DesignRecord
+from .fitting import (Columns, FitClock, error_line, fit_family, mase_period,
+                      predict_family, rows_in, seasonality_of, selected_structure,
+                      utc_now, verify_data)
 from .metrics.error_metrics import compute_metrics
 from .models.families import get_family, load_family_class, resolve_space
 from .records import atomic_directory, canonical_json, record_json
 from .search import nest_params, sample_settings
-from .seasonality import make_seasonality
 from .settings import _deep_merge
 
 logger = logging.getLogger(__name__)
@@ -48,127 +48,6 @@ SCREENING_CRITERIA = ("S1", "S2", "S3", "S4", "S5")
 # The step-0 verdict words, as the candidates record spells them.
 _VERDICT_WORDS = {"PASS": "pass", "FAIL": "fail", "not applicable": "n/a",
                   "not selected": "not-selected"}
-
-
-# ---------------------------------------------------------------------------
-# Fits: the only place a family is fitted
-# ---------------------------------------------------------------------------
-
-class FitClock:
-    """Counts the fits run and stamps the moment the first one starts.
-
-    Every family fit in this module goes through _fit, which ticks the clock
-    immediately before calling the family, so first_fit_at is the time no
-    fit can precede.
-    """
-
-    def __init__(self):
-        self.first_fit_at = None
-        self.n_fits = 0
-
-    def tick(self):
-        if self.first_fit_at is None:
-            self.first_fit_at = utc_now()
-        self.n_fits += 1
-
-
-def utc_now():
-    """The current time in UTC to the microsecond, as the records state it."""
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
-
-
-class _Columns:
-    def __init__(self, data_handoff):
-        self.date = data_handoff["date_col"]
-        self.y = data_handoff["outcome_col"]
-        self.cov = list(data_handoff["covariate_cols"]) or None
-
-
-def _count_warnings(caught, counter):
-    for w in caught:
-        counter[w.category.__name__] += 1
-
-
-def _fit(model, df, cols, clock, counter):
-    """Fit model on df; library warnings are counted by category, not shown."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        clock.tick()
-        try:
-            return model.fit(df, target_col=cols.y, date_col=cols.date,
-                             covariate_cols=cols.cov)
-        finally:
-            _count_warnings(caught, counter)
-
-
-def _predict(model, df, cols, counter):
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        try:
-            pred = model.predict(df, target_col=cols.y, date_col=cols.date,
-                                 covariate_cols=cols.cov)
-        finally:
-            _count_warnings(caught, counter)
-    predicted = np.asarray(pred.predicted, dtype=float)
-    if not np.all(np.isfinite(predicted)):
-        raise ValueError(f"the forecast holds {int((~np.isfinite(predicted)).sum())} "
-                         "non-finite values")
-    return predicted
-
-
-def _error_line(e):
-    return f"{type(e).__name__}: {e}"
-
-
-def _structure(family, fit_result):
-    """What the fit selected, where the family selects anything itself.
-
-    ARIMA's tuned values are search bounds, so each fit picks its own order;
-    the order, seasonal order and intercept are recorded per fit.
-    """
-    if family != "arima":
-        return None
-    model = fit_result.model_object
-    return {"order": list(fit_result.metadata["order"]),
-            "seasonal_order": list(fit_result.metadata["seasonal_order"]),
-            "with_intercept": bool(getattr(model, "with_intercept", False))}
-
-
-# ---------------------------------------------------------------------------
-# Data
-# ---------------------------------------------------------------------------
-
-def _rows(df, date_col, bounds, what):
-    """The rows of df dated in [start, end); their count must be sealed n."""
-    dates = pd.to_datetime(df[date_col])
-    keep = (dates >= pd.Timestamp(bounds["start"])) & (dates < pd.Timestamp(bounds["end"]))
-    part = df.loc[keep].copy()
-    if len(part) != bounds["n"]:
-        raise ValueError(
-            f"{what} [{bounds['start']}, {bounds['end']}) holds {len(part)} rows in "
-            f"the data and {bounds['n']} in the sealed design.")
-    return part
-
-
-def _seasonality(handoff):
-    s = handoff["seasonality"]
-    seasonality = make_seasonality(s["cycles"],
-                                   SeriesFrequency.from_alias(handoff["data"]["freq"]))
-    if dict(seasonality.periods) != dict(s["periods"]):
-        raise ValueError(
-            f"This package derives the seasonal periods {dict(seasonality.periods)} "
-            f"where the design sealed {dict(s['periods'])}.")
-    return seasonality
-
-
-def mase_period(seasonality):
-    """The seasonal-naive period S1's MASE compares against.
-
-    One cycle of the longest declared cycle, rounded to whole rows (annual on
-    weekly data is 52); the plain naive (1) when no cycle is declared.
-    """
-    cycle = longest_cycle(seasonality)
-    return 1 if cycle is None else int(round(seasonality.periods[cycle]))
 
 
 # ---------------------------------------------------------------------------
@@ -243,12 +122,12 @@ def _score(family, params, seasonality, folds, cols, m, clock, counter):
     for fold, train, evaluate in folds:
         model = cls(params=params, seasonality=seasonality)
         try:
-            fit = _fit(model, train, cols, clock, counter)
-            predicted = _predict(model, evaluate, cols, counter)
+            fit = fit_family(model, train, cols, clock, counter)
+            predicted = predict_family(model, evaluate, cols, counter)
         except Exception as e:
-            return {"status": "failed", "fold": fold["k"], "error": _error_line(e)}
+            return {"status": "failed", "fold": fold["k"], "error": error_line(e)}
         per_fold.append(_fold_scores(fold, train, evaluate, predicted, cols, m))
-        structure.append(_structure(family, fit))
+        structure.append(selected_structure(family, fit))
     return {"status": "ok", "folds": per_fold, "structure": structure,
             "mean_rmse": float(np.mean([f["rmse"] for f in per_fold])),
             "mean_mae": float(np.mean([f["mae"] for f in per_fold]))}
@@ -320,14 +199,14 @@ def screen_candidate(handoff, data, cid, clock=None):
     family, spec = cand["family"], get_family(cand["family"])
     split = handoff["splits"][cand["split"]]
     combo = handoff["combinations"][f"{cand['split']}/{cand['cv']}"]
-    cols = _Columns(handoff["data"])
-    seasonality = _seasonality(handoff)
+    cols = Columns(handoff["data"])
+    seasonality = seasonality_of(handoff)
     m = mase_period(seasonality)
 
     # The training window only: no row at or after its end reaches a family.
-    train = _rows(data, cols.date, split["train"], f"training window {cand['split']}")
-    folds = [(f, _rows(train, cols.date, f["train"], f"fold {f['k']} training portion"),
-              _rows(train, cols.date, f["evaluate"], f"fold {f['k']} evaluation slice"))
+    train = rows_in(data, cols.date, split["train"], f"training window {cand['split']}")
+    folds = [(f, rows_in(train, cols.date, f["train"], f"fold {f['k']} training portion"),
+              rows_in(train, cols.date, f["evaluate"], f"fold {f['k']} evaluation slice"))
              for f in combo["folds"]]
 
     entry = {
@@ -379,9 +258,9 @@ def screen_candidate(handoff, data, cid, clock=None):
 
     model = load_family_class(family)(params=best["params"], seasonality=seasonality)
     try:
-        fit = _fit(model, train, cols, clock, warn["whole_window"])
+        fit = fit_family(model, train, cols, clock, warn["whole_window"])
     except Exception as e:
-        return _failed(entry, warn, "whole_window", _error_line(e), traceback.format_exc())
+        return _failed(entry, warn, "whole_window", error_line(e), traceback.format_exc())
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         insample = compute_metrics(train[cols.y].to_numpy(dtype=float),
@@ -402,7 +281,7 @@ def screen_candidate(handoff, data, cid, clock=None):
 
 def _fitted_structure(family, fold_structure, fit, model):
     if family == "arima":
-        return {"folds": fold_structure, "whole_window": _structure(family, fit)}
+        return {"folds": fold_structure, "whole_window": selected_structure(family, fit)}
     return {"whole_window": model.seasonal_components()}
 
 
@@ -486,25 +365,6 @@ def _verify_design(declared):
             "under a new label.")
 
 
-def _verify_data(handoff, data):
-    """The data must be the data the design was sealed against."""
-    d = handoff["data"]
-    cols = [d["outcome_col"], *d["covariate_cols"]]
-    missing = [c for c in [d["date_col"], *cols] if c not in data.columns]
-    if missing:
-        raise ScreeningError(f"The data has no column(s) {missing}; the design was "
-                             f"sealed on {[d['date_col'], *cols]}.")
-    fp = fingerprint(data, d["date_col"], cols, handoff["sub_periods"]["full_window"]["end"])
-    if fp["digest"] != d["fingerprint"]:
-        rows, sealed = fp["rows"], d["rows"]
-        raise ScreeningError(
-            f"The data does not match the design's fingerprint. Sealed: {d['fingerprint']} "
-            f"over {sealed['n']} rows, {sealed['first']} to {sealed['last']}. Given: "
-            f"{fp['digest']} over {rows['n']} rows, {rows['first']} to {rows['last']}. "
-            "Nothing has been fit.")
-    return fp
-
-
 def _minutes(start, end):
     seconds = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()
     return max(1, round(seconds / 60))
@@ -571,7 +431,7 @@ def screen_models(declared, data, rerun=False):
     design = declared.to_dict()
     handoff = design["handoff"]
     label = design["label"]
-    fp = _verify_data(handoff, data)
+    fp = verify_data(handoff, data, ScreeningError)
 
     target = os.path.join(handoff["output_path"], RECORD_DIR)
     existing = CandidatesRecord.load(target) if os.path.exists(target) else None
