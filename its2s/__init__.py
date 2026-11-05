@@ -8,11 +8,13 @@ from .compare import compare_models
 from .cross_validation import time_series_cv
 from .design import (Design, DesignError, DesignWarning, FrozenDesignError,
                      SealError, declare_design)
+from .candidates_record import CandidatesRecord
 from .design_record import DesignRecord
 from .explore import explore
 from .metrics.excess import calc_ate_summary
 from .settings import load_config
 from .pipeline import run_single_its
+from .screening import ScreeningError, screen_models
 from .tuning import tune_model, TuningResult
 
 __all__ = [
@@ -33,4 +35,7 @@ __all__ = [
     "SealError",
     "DesignRecord",
     "explore",
+    "screen_models",
+    "CandidatesRecord",
+    "ScreeningError",
 ]

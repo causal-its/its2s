@@ -10,11 +10,14 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
-from scipy.stats import qmc
 
 from .cross_validation import (_CV_METHOD_ARGS, _default_cv_end_date,
                                time_series_cv)
 from .models.families import FAMILIES
+# The sampler and the nesting helper are shared with step 1's screening; the
+# old private names stay importable from here until tune_model is retired.
+from .search import nest_params as _unflatten_params
+from .search import sample_settings as _sample_lhs
 from .settings import _deep_merge, load_config
 
 logger = logging.getLogger(__name__)
@@ -60,54 +63,6 @@ class TuningResult:
     metric: str
     seed: int
     cv_end_date: pd.Timestamp | None = None
-
-
-def _sample_lhs(search_space: dict, n_trials: int, seed: int) -> list[dict]:
-    """Return n_trials parameter dicts sampled via Latin hypercube.
-
-    Each parameter is scaled from the unit hypercube to its declared range.
-    Log-scale parameters are sampled log-uniformly (uniform in log space).
-    Integer parameters are rounded and clamped to [low, high].
-    """
-    keys = list(search_space.keys())
-    sampler = qmc.LatinHypercube(d=len(keys), seed=seed)
-    unit_samples = sampler.random(n=n_trials)  # shape (n_trials, n_params)
-
-    trials = []
-    for row in unit_samples:
-        params = {}
-        for j, key in enumerate(keys):
-            low, high, dtype, scale = search_space[key]
-            u = float(row[j])
-            if scale == "log":
-                val = math.exp(math.log(low) + u * (math.log(high) - math.log(low)))
-            else:
-                val = low + u * (high - low)
-            if dtype == "int":
-                val = int(round(val))
-                val = max(int(low), min(int(high), val))
-            params[key] = val
-        trials.append(params)
-
-    return trials
-
-
-def _unflatten_params(flat_params: dict) -> dict:
-    """Convert double-underscore-prefixed keys into nested dicts.
-
-    {"xgb__max_depth": 8, "prophet__changepoint_prior_scale": 0.05}
-    -> {"xgb": {"max_depth": 8}, "prophet": {"changepoint_prior_scale": 0.05}}
-
-    Keys without "__" stay at the top level.
-    """
-    result = {}
-    for key, val in flat_params.items():
-        if "__" in key:
-            section, param = key.split("__", 1)
-            result.setdefault(section, {})[param] = val
-        else:
-            result[key] = val
-    return result
 
 
 def _evaluate_trial(

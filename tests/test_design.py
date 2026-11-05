@@ -600,8 +600,9 @@ class TestSweepAndSeeds:
         d = _minimal(_design())
         d.add_family("arima", n_trials=0)
         resolved, _ = resolve(d)
-        # prophet_xgb: 10 x 2 folds + 1; arima: max(0, 1) x 2 folds + 1.
-        assert resolved["report_fields"]["sweep_fits"] == 21 + 3
+        # prophet_xgb: 10 x 2 folds, 2 default-reference fits, 1 in-sample;
+        # arima with no search: its default on 2 folds, 1 in-sample.
+        assert resolved["report_fields"]["sweep_fits"] == 23 + 3
 
     def test_seeds_are_derived_and_independent(self):
         from its2s.seeds import derive_seed

@@ -16,9 +16,7 @@
 import json
 import math
 import os
-import shutil
 import textwrap
-import uuid
 import warnings
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -27,11 +25,12 @@ import pandas as pd
 
 from . import __version__
 from .design_record import (PLOT_FILE, RECORD_DIR, RECORD_FILE, REPORT_FILE,
-                            DesignRecord, _iso, build_record, fingerprint, record_json)
+                            DesignRecord, _iso, build_record, fingerprint)
 from .folds import cycles_seen, layout_folds, longest_cycle
 from .frequency import SeriesFrequency, resolve_frequency
 from .models.families import FAMILIES, arima_period, resolve_space
 from .origins import N_ORIGINS_RANGE, place_origins
+from .records import atomic_directory, record_json
 from .seasonality import CYCLES, _sampling_interval, make_seasonality
 from .seeds import derive_seed
 from .outputs.design_plot import MAX_PLOTTED_COMBINATIONS, design_figure
@@ -743,6 +742,19 @@ def _resolve_combinations(design, splits, seasonality, criteria, findings):
     return combos
 
 
+def _candidate_fits(n_trials, n_folds):
+    """Fits step 1 runs for one candidate.
+
+    A search scores every setting on every fold and the default
+    configuration on every fold as a reference, then fits the chosen
+    setting once on the whole training window. With no search the default
+    configuration is the setting, so it is scored once.
+    """
+    if n_trials == 0:
+        return n_folds + 1
+    return n_trials * n_folds + n_folds + 1
+
+
 def _verdict(entry, value):
     if value is None:
         return "not applicable"
@@ -931,7 +943,7 @@ def resolve(design):
                 "family": name, "split": combo["split"], "cv": combo["cv"],
                 "n_trials": fam["n_trials"],
                 "seed": derive_seed(design.seed, cand),
-                "fits": max(fam["n_trials"], 1) * len(combo["folds"]) + 1,
+                "fits": _candidate_fits(fam["n_trials"], len(combo["folds"])),
             }
 
     sw = seasonality
@@ -1160,8 +1172,9 @@ def render_text(resolved):
 
     add("")
     add(f"SWEEP  {_count(len(rf['candidates']), 'candidate')}, "
-        f"{_count(rf['sweep_fits'], 'fit')} (per candidate: max(n_trials, 1) x folds, "
-        "plus one in-sample fit)")
+        f"{_count(rf['sweep_fits'], 'fit')} (per candidate: n_trials x folds, plus "
+        "folds for the default-configuration reference when searching, plus one "
+        "in-sample fit)")
 
     add("")
     add("SEEDS  (derived from the master seed and each id)")
@@ -1301,11 +1314,7 @@ def _write_label(label_dir, record, report, fig):
     renamed into place only when complete, so a failure part-way leaves no
     half-written label to block the retry.
     """
-    parent = os.path.dirname(label_dir) or "."
-    os.makedirs(parent, exist_ok=True)
-    tmp = os.path.join(parent, f".{os.path.basename(label_dir)}.partial-{uuid.uuid4().hex}")
-    os.mkdir(tmp)
-    try:
+    with atomic_directory(label_dir) as tmp:
         sub = os.path.join(tmp, RECORD_DIR)
         os.mkdir(sub)
         with open(os.path.join(sub, RECORD_FILE), "w", encoding="utf-8") as fh:
@@ -1314,12 +1323,6 @@ def _write_label(label_dir, record, report, fig):
             fh.write(report)
         if fig is not None:
             fig.savefig(os.path.join(sub, PLOT_FILE), dpi=120, bbox_inches="tight")
-        for name in os.listdir(sub):
-            os.chmod(os.path.join(sub, name), 0o444)
-        os.rename(tmp, label_dir)
-    except BaseException:
-        shutil.rmtree(tmp, ignore_errors=True)
-        raise
 
 
 def declare_design(design):

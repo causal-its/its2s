@@ -8,15 +8,16 @@
 # Dependencies: numpy, pandas
 
 import hashlib
-import json
-import os
 from dataclasses import dataclass, field
-from types import MappingProxyType
 
 import pandas as pd
 
-SCHEMA_VERSION = 1
-SEAL_ALGORITHM = "sha256"
+from .records import SEAL_ALGORITHM, SealedRecord, seal_record
+
+# Version 2 added S4, S5 and per-fold coverage to each combination of the
+# handoff, and each criterion's threshold_defaulted, so step 1 reads the
+# handoff only.
+SCHEMA_VERSION = 2
 RECORD_DIR = "00_design"
 RECORD_FILE = "00-design.json"
 REPORT_FILE = "00-design_report.txt"
@@ -88,33 +89,6 @@ def fingerprint(data, date_col, value_cols, end):
 
 
 # ---------------------------------------------------------------------------
-# Seal
-# ---------------------------------------------------------------------------
-
-def _canonical(record):
-    """The record's content as one fixed byte string, seal excluded.
-
-    Sorted keys and no whitespace, so re-indenting the file does not break
-    the seal while any change to a value does.
-    """
-    body = {k: v for k, v in record.items() if k != "seal"}
-    return json.dumps(body, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=True, allow_nan=False).encode("ascii")
-
-
-def seal_digest(record):
-    """The hash that seals a record."""
-    return hashlib.sha256(_canonical(record)).hexdigest()
-
-
-def seal_matches(record):
-    """True when the record's seal is the hash of its own content."""
-    seal = record.get("seal")
-    return (isinstance(seal, dict) and seal.get("algorithm") == SEAL_ALGORITHM
-            and seal.get("digest") == seal_digest(record))
-
-
-# ---------------------------------------------------------------------------
 # The handoff: what the next step reads, and nothing else
 # ---------------------------------------------------------------------------
 
@@ -153,10 +127,14 @@ def build_handoff(resolved, fp):
                   "test": _bounds(s["test"]),
                   "post_event": _bounds(s["post_event"])}
             for sid, s in r["splits"].items()},
+        # S4 and S5 are sealed facts of each combination; step 1 copies them
+        # rather than recomputing them, with each fold's coverage beside them.
         "combinations": {
             key: {"split": c["split"], "cv": c["cv"],
                   "folds": [{"k": f["k"], "train": _bounds(f["train"]),
-                             "evaluate": _bounds(f["evaluate"])} for f in c["folds"]]}
+                             "evaluate": _bounds(f["evaluate"]),
+                             "cycles": f["train"]["cycles"]} for f in c["folds"]],
+                  "S4": dict(c["S4"]), "S5": dict(c["S5"])}
             for key, c in r["combinations"].items()},
         # m is the seasonal period the family fits at (arima only), so a
         # later step uses the period this record was sealed with rather than
@@ -171,7 +149,8 @@ def build_handoff(resolved, fp):
         # op is recorded for the same reason: each criterion is judged by the
         # comparison it was sealed under.
         "criteria": {cid: {"selected": c["selected"], "op": c["op"],
-                           "threshold": c["threshold"]}
+                           "threshold": c["threshold"],
+                           "threshold_defaulted": c["threshold_defaulted"]}
                      for cid, c in r["criteria"].items()},
         "origins": {sid: {"dates": list(o["dates"]), "phase_origin": o["phase_origin"]}
                     for sid, o in r["check"]["splits"].items()},
@@ -207,36 +186,11 @@ def build_record(resolved, fp, declared_at, package_version):
         "handoff": build_handoff(resolved, fp),
         "report_fields": resolved["report_fields"],
     }
-    record["seal"] = {"algorithm": SEAL_ALGORITHM, "digest": seal_digest(record)}
-    return record
-
-
-def record_json(record):
-    """The record as written to disk."""
-    return json.dumps(record, indent=2, ensure_ascii=True, allow_nan=False) + "\n"
-
-
-def _freeze(value):
-    """A read-only copy: dicts become mapping proxies, lists tuples."""
-    if isinstance(value, dict):
-        return MappingProxyType({k: _freeze(v) for k, v in value.items()})
-    if isinstance(value, list):
-        return tuple(_freeze(v) for v in value)
-    return value
-
-
-def _record_path(path):
-    """Accept the record file, its 00_design directory, or the label directory."""
-    path = os.fspath(path)
-    if os.path.isdir(os.path.join(path, RECORD_DIR)):
-        path = os.path.join(path, RECORD_DIR)
-    if os.path.isdir(path):
-        path = os.path.join(path, RECORD_FILE)
-    return path
+    return seal_record(record)
 
 
 @dataclass(frozen=True)
-class DesignRecord:
+class DesignRecord(SealedRecord):
     """A sealed design record, read-only.
 
     Built from the JSON on disk (load) or from the dict declare_design
@@ -244,6 +198,12 @@ class DesignRecord:
     sections are read-only mappings and tuples; to_dict() returns a fresh
     plain copy.
     """
+
+    KIND = "design"
+    RECORD_DIR = RECORD_DIR
+    RECORD_FILE = RECORD_FILE
+    SEALED_WHEN = "declared"
+    REDO = "Declare again under a new label."
 
     schema_version: int
     package_version: str
@@ -268,44 +228,6 @@ class DesignRecord:
     report_fields: object
     path: str | None = None
     _json: str = field(default="", repr=False, compare=False)
-
-    @classmethod
-    def from_dict(cls, record, path=None):
-        """A DesignRecord from a record dict; raises SealError if the seal
-        does not match the content."""
-        from .design import SealError
-        if not seal_matches(record):
-            where = f" at {path}" if path else ""
-            raise SealError(
-                f"The design record{where} does not match its seal: it has been "
-                "edited since it was declared, so it is not the design that was "
-                "sealed. Declare again under a new label.")
-        names = [f for f in cls.__dataclass_fields__ if f not in ("path", "_json")]
-        return cls(**{n: _freeze(record[n]) for n in names}, path=path,
-                   _json=json.dumps(record))
-
-    @classmethod
-    def load(cls, path):
-        """Read and verify a design record.
-
-        path may be the record file, its 00_design directory, or the label
-        directory that holds it.
-        """
-        from .design import SealError
-        file = _record_path(path)
-        try:
-            with open(file, encoding="utf-8") as fh:
-                record = json.load(fh)
-        except FileNotFoundError:
-            raise SealError(f"No design record at {file}.") from None
-        except json.JSONDecodeError as e:
-            raise SealError(f"The design record at {file} is not valid JSON ({e}); "
-                              "it has been edited since it was declared.") from None
-        return cls.from_dict(record, path=file)
-
-    def to_dict(self):
-        """A fresh, mutable copy of the record as JSON values."""
-        return json.loads(self._json)
 
     def report(self):
         """The text report, exactly as written to 00-design_report.txt."""
