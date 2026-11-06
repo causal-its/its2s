@@ -23,6 +23,7 @@ import warnings
 import pandas as pd
 import pytest
 
+import its2s.check as check
 import its2s.fitting as fitting
 import its2s.screening as screening
 from its2s import CandidatesRecord, screen_models
@@ -129,7 +130,7 @@ def _calls_to(tree, attr):
 
 # Every workflow module that fits a model. Each step that fits must be
 # listed here, so the stamping rule below covers it.
-_FITTING_MODULES = (fitting, screening)
+_FITTING_MODULES = (fitting, screening, check)
 
 
 def test_only_the_stamping_helper_reaches_a_family_fit():
