@@ -9,8 +9,6 @@
 # Usage: from its2s.check_report import render_report
 # Dependencies: none beyond the package
 
-import os
-
 from .design import _count, _fmt_threshold
 
 RULE = "=" * 80
@@ -29,12 +27,8 @@ def _verdict_word(c):
     return {"pass": "PASS", "fail": "FAIL", "n/a": "n/a", "not-selected": "--"}[c["verdict"]]
 
 
-def _label(r):
-    return os.path.basename(os.path.normpath(r["handoff"]["output_path"]))
-
-
 def _header(r, add):
-    add(f"STEP 2 -- CHECK RECORD, SEALED          series: {_label(r)}")
+    add(f"STEP 2 -- CHECK RECORD, SEALED          series: {r['label']}")
     add(f"its2s {r['package_version']}")
     add(f"  checked            {r['checked_at']}")
     add(f"  first fit          {r['first_fit_at']}")
@@ -54,6 +48,8 @@ def _header(r, add):
         when = (p["checked_at"] or "unknown date")[:10]
         broken = "" if p["seal_intact"] else "  (record no longer matches its seal)"
         add(f"    {p['label']}  {when}  {p['candidate_id']}  {p['verdict']}{broken}")
+    for u in prior["unreadable"]:
+        add(f"  UNREADABLE earlier check record, not counted: {u['folder']} ({u['why']})")
     for cid in CHECK:
         c = r["criteria"][cid]
         if c["overridden"]:
@@ -81,6 +77,8 @@ def _criteria(r, add):
     add(f"  mean origin RMSE {_num(a['mean_rmse'], 2)}; step 1 CV RMSE {_num(a['cv_rmse'], 2)}; "
         f"worst {_num(a['worst_rmse'], 2)}, median {_num(a['median_rmse'], 2)}")
     add(f"  C1's seasonal naive repeats the value {a['mase_m']} rows earlier, as at S1.")
+    add("  A criterion not selected still prints its value; only its threshold and")
+    add("  verdict are withheld (shown --), and it does not enter the verdict.")
     for reason in a["verdict_reasons"]:
         add(f"  NOT PASSED: {reason}")
 
@@ -124,7 +122,7 @@ def _caveat(r, add):
     add("  scored; its forecast error is unknowable by design.")
     if r["verdict"] == "FAIL":
         add("")
-        add(f"FAILED. No later step will run on {_label(r)}.")
+        add(f"FAILED. No later step will run on {r['label']}.")
     add(RULE)
 
 

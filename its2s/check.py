@@ -55,7 +55,8 @@ class CheckError(ValueError):
 
 
 class CheckWarning(UserWarning):
-    """An earlier check was run on the same pre-event data under another label."""
+    """An earlier check was run on the same pre-event data under another label,
+    or an earlier check record cannot be read to tell."""
 
 
 # ---------------------------------------------------------------------------
@@ -335,24 +336,38 @@ def _prior_checks(output_path, digest):
     fingerprint matches. A record with a broken seal is still counted, and
     named as such: it is still evidence that the test window was seen."""
     output_dir = os.path.dirname(output_path) or "."
-    found = []
+    found, unreadable = [], []
     if not os.path.isdir(output_dir):
-        return found
-    for label in sorted(os.listdir(output_dir)):
-        rec = _read_json(os.path.join(output_dir, label, RECORD_DIR,
-                                      CheckRecord.RECORD_FILE))
-        if not isinstance(rec, dict):
+        return found, unreadable
+    for folder in sorted(os.listdir(output_dir)):
+        path = os.path.join(output_dir, folder, RECORD_DIR, CheckRecord.RECORD_FILE)
+        if not os.path.exists(path):
             continue
-        pre = rec.get("pre_event_fingerprint")
-        if isinstance(pre, dict) and pre.get("digest") == digest:
-            found.append({"label": label, "checked_at": rec.get("checked_at"),
+        rec = _read_json(path)
+        pre = rec.get("pre_event_fingerprint") if isinstance(rec, dict) else None
+        if not (isinstance(pre, dict) and isinstance(pre.get("digest"), str)):
+            # Whether this check saw the same data cannot be told, so it is
+            # not counted; it is disclosed instead of passed over.
+            unreadable.append({"folder": folder, "path": path,
+                               "why": ("not readable as JSON" if rec is None
+                                       else "no pre-event fingerprint")})
+            continue
+        if pre["digest"] == digest:
+            label = rec.get("label")
+            found.append({"label": label if isinstance(label, str) else folder,
+                          "checked_at": rec.get("checked_at"),
                           "candidate_id": rec.get("candidate_id"),
                           "verdict": rec.get("verdict"),
                           "seal_intact": seal_matches(rec)})
-    return found
+    return found, unreadable
 
 
-def _warn_prior(found):
+def _warn_prior(found, unreadable):
+    for u in unreadable:
+        warnings.warn(
+            f"An earlier check record at {u['path']} is {u['why']}, so whether it "
+            "checked this data cannot be told. It is not counted; it is listed in "
+            "this record and its report as unreadable.", CheckWarning, stacklevel=3)
     if not found:
         return
     named = "; ".join(
@@ -370,8 +385,8 @@ def _warn_prior(found):
 # The public step
 # ---------------------------------------------------------------------------
 
-def _record_fields(candidates, cid, rationale, body, fp, pre_fp, prior, checked_at,
-                   sealed_at):
+def _record_fields(candidates, cid, rationale, body, fp, pre_fp, prior, unreadable,
+                   checked_at, sealed_at):
     rec = candidates.to_dict()
     h = rec["handoff"]
     c = h["candidates"][cid]
@@ -381,6 +396,7 @@ def _record_fields(candidates, cid, rationale, body, fp, pre_fp, prior, checked_
         "checked_at": checked_at,
         "first_fit_at": body["first_fit_at"],
         "sealed_at": sealed_at,
+        "label": rec["design"]["label"],
         "candidate_id": cid,
         "rationale": rationale,
         "verdict": body["verdict"],
@@ -394,7 +410,8 @@ def _record_fields(candidates, cid, rationale, body, fp, pre_fp, prior, checked_
                             "n_candidates_passed_all": h["multiplicity"]["n_passed_all"]},
         "multiplicity": {**h["multiplicity"], "n_check_fits": body["n_fits"]},
         "split_chosen_after_evidence": not c["primary"],
-        "prior_checks": {"count": len(prior), "records": prior},
+        "prior_checks": {"count": len(prior), "records": prior,
+                         "unreadable": unreadable},
         "test_window_spent": True,
         "provenance": {
             "design": {"seal": rec["design"]["seal"]["digest"],
@@ -459,19 +476,19 @@ def check_selected_model(candidates, candidate_id, data, rationale=None,
                  if v is not _UNSET}
     thresholds = resolve_thresholds(handoff["criteria"], overrides)
 
-    label = os.path.basename(os.path.normpath(handoff["output_path"]))
+    label = candidates.design["label"]
     target = os.path.join(handoff["output_path"], RECORD_DIR)
     if os.path.exists(target):
         _refuse_spent(target, label)
 
     pre_fp = _pre_event_fingerprint(handoff, data)
-    prior = _prior_checks(handoff["output_path"], pre_fp["digest"])
-    _warn_prior(prior)
+    prior, unreadable = _prior_checks(handoff["output_path"], pre_fp["digest"])
+    _warn_prior(prior, unreadable)
 
     checked_at = utc_now()
     body = check(handoff, data, candidate_id, thresholds)
     fields = _record_fields(candidates, candidate_id, rationale, body, fp, pre_fp, prior,
-                            checked_at, utc_now())
+                            unreadable, checked_at, utc_now())
     record = build_record(fields, handoff)
     result = CheckRecord.from_dict(record)
     report = result.report()

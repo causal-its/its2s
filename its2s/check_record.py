@@ -17,13 +17,14 @@ RECORD_FILE = "02-check.json"
 REPORT_FILE = "02-check_report.txt"
 
 
-def build_handoff(cand_handoff, cid, verdict, stamps):
+def build_handoff(cand_handoff, label, cid, verdict, stamps):
     """Select what step 3 reads: the facts it fits with, and what it carries
     forward for step 4."""
     h = cand_handoff
     c = h["candidates"][cid]
     split = h["splits"][c["split"]]
     return {
+        "label": label,
         "verdict": verdict,
         "data": dict(h["data"]),
         "question": dict(h["question"]),
@@ -59,8 +60,8 @@ def build_record(fields, cand_handoff):
         "schema_version": SCHEMA_VERSION,
         **fields,
         "seal": None,
-        "handoff": build_handoff(cand_handoff, fields["candidate_id"], fields["verdict"],
-                                 stamps),
+        "handoff": build_handoff(cand_handoff, fields["label"], fields["candidate_id"],
+                                 fields["verdict"], stamps),
     }
     return seal_record(record)
 
@@ -86,6 +87,7 @@ class CheckRecord(SealedRecord):
     first_fit_at: str | None
     sealed_at: str
     seal: object
+    label: str
     candidate_id: str
     rationale: str | None
     verdict: str

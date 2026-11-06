@@ -9,7 +9,7 @@ from .cross_validation import time_series_cv
 from .design import (Design, DesignError, DesignWarning, FrozenDesignError,
                      SealError, declare_design)
 from .candidates_record import CandidatesRecord
-from .check import CheckError, check_selected_model
+from .check import CheckError, CheckWarning, check_selected_model
 from .check_record import CheckRecord
 from .design_record import DesignRecord
 from .explore import explore
@@ -43,4 +43,5 @@ __all__ = [
     "check_selected_model",
     "CheckRecord",
     "CheckError",
+    "CheckWarning",
 ]

@@ -459,3 +459,64 @@ class TestWritten:
         assert rec.multiplicity["n_check_fits"] == len(rec.origins)
         assert rec.screening_facts["passed_all"] == screened.handoff[
             "candidates"][SP1]["passed_all"]
+
+
+# ---------------------------------------------------------------------------
+# The label, unreadable earlier records, and the public warning
+# ---------------------------------------------------------------------------
+
+def _plant(tmp_path, folder, text):
+    """Write a file where a sibling label's check record would be."""
+    sub = tmp_path / folder / RECORD_DIR
+    sub.mkdir(parents=True)
+    (sub / RECORD_FILE).write_text(text)
+
+
+class TestLabel:
+
+    def test_the_label_is_stored_not_derived(self, tmp_path, families):
+        cands = _quiet(_declare(tmp_path, label="heat_dome"), data=_frame())
+        rec = _check(cands, SP1, data=_frame())
+        assert rec.label == "heat_dome" == cands.design["label"]
+        assert rec.handoff["label"] == "heat_dome"
+        assert rec.report().startswith("STEP 2 -- CHECK RECORD, SEALED          "
+                                       "series: heat_dome")
+
+
+class TestUnreadablePriorRecords:
+
+    @pytest.mark.parametrize("text, why", [
+        ("{not json", "not readable as JSON"),
+        (json.dumps({"verdict": "PASS", "checked_at": "2026-01-01"}),
+         "no pre-event fingerprint")])
+    def test_disclosed_and_not_counted(self, tmp_path, families, text, why):
+        _plant(tmp_path, "damaged", text)
+        cands = _quiet(_declare(tmp_path), data=_frame())
+        with pytest.warns(CheckWarning, match=why):
+            rec = _check(cands, SP1, data=_frame())
+        assert rec.prior_checks["count"] == 0
+        (u,) = rec.prior_checks["unreadable"]
+        assert (u["folder"], u["why"]) == ("damaged", why)
+        assert f"UNREADABLE earlier check record, not counted: damaged ({why})" \
+            in rec.report()
+
+    def test_a_folder_without_a_check_record_is_not_listed(self, tmp_path, families):
+        (tmp_path / "unrelated").mkdir()
+        cands = _quiet(_declare(tmp_path), data=_frame())
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", CheckWarning)
+            rec = _check(cands, SP1, data=_frame())
+        assert rec.prior_checks["unreadable"] == ()
+
+
+class TestPublicNames:
+
+    def test_check_warning_is_top_level(self):
+        import its2s
+        assert its2s.CheckWarning is CheckWarning
+        assert "CheckWarning" in its2s.__all__
+        assert issubclass(CheckWarning, UserWarning)
+
+    def test_the_report_explains_a_withheld_verdict(self, screened):
+        rec = _check(screened, SP1, data=_frame(), C3=None)
+        assert "A criterion not selected still prints its value" in rec.report()
