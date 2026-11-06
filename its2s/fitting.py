@@ -2,9 +2,10 @@
 #   that stamps the first fit and counts them, the one helper through which
 #   every family fit runs, forecasting with a finite-value check, the rows of
 #   a sealed window, the declared seasonality rebuilt from a handoff, the
-#   seasonal-naive period, and the check that the data is the data a design
-#   was sealed against. Screening, the check and the final fit all use these,
-#   so "fit a family on these rows" has one implementation.
+#   seasonal-naive period, the span of a set of rows, and the check that the
+#   data is the data a design was sealed against. Screening, the check and
+#   the final fit all use these, so "fit a family on these rows" has one
+#   implementation.
 # Usage: from its2s.fitting import FitClock, fit_family, predict_family, rows_in
 # Dependencies: numpy, pandas
 
@@ -14,7 +15,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from .design_record import fingerprint
+from .design_record import _iso, fingerprint
 from .folds import longest_cycle
 from .frequency import SeriesFrequency
 from .seasonality import make_seasonality
@@ -118,6 +119,12 @@ def rows_in(df, date_col, bounds, what):
             f"{what} [{bounds['start']}, {bounds['end']}) holds {len(part)} rows in "
             f"the data and {bounds['n']} in the sealed design.")
     return part
+
+
+def span_of(df, date_col):
+    """The first and last date of df's rows, and how many there are."""
+    dates = pd.to_datetime(df[date_col])
+    return {"first": _iso(dates.iloc[0]), "last": _iso(dates.iloc[-1]), "n": len(df)}
 
 
 def seasonality_of(handoff):

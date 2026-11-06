@@ -81,7 +81,9 @@ class SealedRecord:
     """Reading and verifying a sealed step record; shared by every step.
 
     A subclass is a frozen dataclass whose fields are the record's top-level
-    keys plus path and _json, and which sets the class attributes below.
+    keys plus path, _json and any other underscored field it keeps beside
+    the record (none is record content), and which sets the class
+    attributes below.
     Nested sections are read-only mappings and tuples; to_dict() returns a
     fresh plain copy.
     """
@@ -103,9 +105,9 @@ class SealedRecord:
         return path
 
     @classmethod
-    def from_dict(cls, record, path=None):
+    def from_dict(cls, record, path=None, **kept):
         """The record from a dict; raises SealError if the seal does not
-        match the content."""
+        match the content. kept sets underscored fields held beside it."""
         from .design import SealError
         if not seal_matches(record):
             where = f" at {path}" if path else ""
@@ -113,9 +115,11 @@ class SealedRecord:
                 f"The {cls.KIND} record{where} does not match its seal: it has been "
                 f"edited since it was {cls.SEALED_WHEN}, so it is not the {cls.KIND} "
                 f"that was sealed. {cls.REDO}")
-        names = [f for f in cls.__dataclass_fields__ if f not in ("path", "_json")]
+        # path and the underscored fields are not record content.
+        names = [f for f in cls.__dataclass_fields__
+                 if f != "path" and not f.startswith("_")]
         return cls(**{n: freeze(record[n]) for n in names}, path=path,
-                   _json=json.dumps(record))
+                   _json=json.dumps(record), **kept)
 
     @classmethod
     def load(cls, path):

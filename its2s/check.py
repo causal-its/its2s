@@ -33,7 +33,7 @@ from .design_record import RECORD_FILE as DESIGN_FILE
 from .design_record import _iso, fingerprint
 from .fitting import (Columns, FitClock, error_line, fit_family, mase_period,
                       predict_family, rows_in, seasonality_of,
-                      selected_structure, utc_now, verify_data)
+                      selected_structure, span_of, utc_now, verify_data)
 from .metrics.error_metrics import compute_metrics
 from .models.families import load_family_class
 from .origins import max_seasonal_gap
@@ -62,11 +62,6 @@ class CheckWarning(UserWarning):
 # ---------------------------------------------------------------------------
 # One origin
 # ---------------------------------------------------------------------------
-
-def _span(df, date_col):
-    dates = pd.to_datetime(df[date_col])
-    return {"first": _iso(dates.iloc[0]), "last": _iso(dates.iloc[-1]), "n": len(df)}
-
 
 def _origin_rows(train, test, date_col, origin, H):
     """(fit rows, forecast rows) for one origin.
@@ -110,7 +105,7 @@ def _check_origin(k, origin, phase_origin, rows, cand, seasonality, cols, m, clo
     """Fit, forecast and score one origin; a failure is recorded, never raised."""
     fit_rows, ahead = rows
     entry = {"k": k, "date": origin, "event_phase": origin == phase_origin,
-             "fit": _span(fit_rows, cols.date)}
+             "fit": span_of(fit_rows, cols.date)}
     counter = Counter()
     model = load_family_class(cand["family"])(params=cand["params"],
                                               seasonality=seasonality)

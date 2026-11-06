@@ -11,6 +11,8 @@ from .design import (Design, DesignError, DesignWarning, FrozenDesignError,
 from .candidates_record import CandidatesRecord
 from .check import CheckError, CheckWarning, check_selected_model
 from .check_record import CheckRecord
+from .final_fit import FitError, fit_final_model
+from .fit_record import FitRecord
 from .design_record import DesignRecord
 from .explore import explore
 from .metrics.excess import calc_ate_summary
@@ -44,4 +46,7 @@ __all__ = [
     "CheckRecord",
     "CheckError",
     "CheckWarning",
+    "fit_final_model",
+    "FitRecord",
+    "FitError",
 ]
