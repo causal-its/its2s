@@ -57,12 +57,12 @@ class ARIMAModel(BaseModel):
                 suppress_warnings=p["suppress_warnings"],
                 **intercept,
             )
-            self._model.fit(y, exogenous=exog)
+            self._model.fit(y, X=exog)
         else:
             # Initial fit with order selection
             self._model = pm.auto_arima(
                 y,
-                exogenous=exog,
+                X=exog,
                 start_p=min(_START["p"], p["max_p"]),
                 max_p=p["max_p"],
                 d=0 if p["max_d"] == 0 else None,
@@ -85,7 +85,7 @@ class ARIMAModel(BaseModel):
             self._fixed_seasonal_order = self._model.seasonal_order
             self._fixed_with_intercept = bool(self._model.with_intercept)
 
-        fitted = self._model.predict_in_sample(exogenous=exog)
+        fitted = self._model.predict_in_sample(X=exog)
         residuals = y - fitted
 
         self._fit_result = FitResult(
@@ -101,7 +101,7 @@ class ARIMAModel(BaseModel):
         n_periods = len(target_df)
         exog = target_df[covariate_cols].values if covariate_cols else None
 
-        preds = self._model.predict(n_periods=n_periods, exogenous=exog)
+        preds = self._model.predict(n_periods=n_periods, X=exog)
 
         actual = target_df[target_col].values if target_col in target_df.columns else None
 

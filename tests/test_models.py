@@ -322,6 +322,48 @@ class TestARIMASpecific:
         assert len(fr.fitted_values) == len(splits.train_df)
         assert len(pr.predicted) == len(splits.full_predict_df)
 
+    def test_covariate_coefficient_recovered(self):
+        # A covariate must reach the model at all four pmdarima calls: the
+        # order search, the fixed-order refit used by the bootstrap, the
+        # in-sample prediction and the forecast. pmdarima 2.x reads X= and
+        # silently ignores any other keyword, so a misnamed argument fits
+        # no covariate term and raises nothing.
+        from its2s.models.arima import ARIMAModel
+        rng = np.random.default_rng(1106)
+        n, beta = 300, 5.0
+        x = rng.normal(0, 1, n)
+        df = pd.DataFrame({
+            "ds": pd.date_range("2021-01-01", periods=n, freq="D"),
+            "y": 20 + beta * x + rng.normal(0, 1, n),
+            "x": x,
+        })
+        train, future = df.iloc[:250], df.iloc[250:]
+        params = {"stepwise": True, "suppress_warnings": True}
+
+        def check(model):
+            fr = model.fit(train, covariate_cols=["x"])
+            names = list(model._model.arima_res_.param_names)
+            assert "x1" in names
+            coef = model._model.params()[names.index("x1")]
+            # Standard error is about 0.07 here; 0.3 is over four of them.
+            assert abs(coef - beta) < 0.3
+            # The in-sample fit carries the covariate: residual sd near the
+            # noise sd of 1, against about 5 without it.
+            assert np.std(fr.residuals) < 1.5
+            # The forecast moves by the coefficient when the covariate's
+            # future values move by one.
+            shifted = future.assign(x=future["x"] + 1.0)
+            base = model.predict(future, covariate_cols=["x"]).predicted
+            moved = model.predict(shifted, covariate_cols=["x"]).predicted
+            np.testing.assert_allclose(moved - base, coef, rtol=1e-6)
+
+        searched = ARIMAModel(params=params, seasonality=declared("D"))
+        check(searched)
+        # The fixed-order path, as a bootstrap replication refits.
+        refit = searched.clone_fresh()
+        check(refit)
+        assert refit._fixed_order == searched._fixed_order
+
     def test_e2e_weekly_with_m52(self):
         from its2s import run_single_its
         df, intv, _ = make_weekly_series(intervention_effect=5.0, seed=1103)
@@ -400,7 +442,7 @@ class TestARIMASeasonalityAuto:
             seasonal_order = (0, 0, 0, 0)
             with_intercept = False
 
-            def predict_in_sample(self, exogenous=None):
+            def predict_in_sample(self, X=None):
                 return np.zeros(n)
 
         def fake_auto_arima(y, **kwargs):
