@@ -29,7 +29,7 @@ def check_block_length(n_pool, block_length):
             f"pool ({n_pool} observations).")
 
 
-def _resample_blocks(residuals, block_length, rng):
+def _resample_blocks(residuals, block_length, rng, size=None):
     """Resample residuals using moving blocks.
 
     Parameters
@@ -40,11 +40,14 @@ def _resample_blocks(residuals, block_length, rng):
         Length of each block, in observations (rows), never calendar days.
     rng : np.random.Generator
         Random number generator.
+    size : int or None
+        Length of the result. None (the default) gives a result as long as
+        residuals. Whole blocks are drawn and the last one is truncated.
 
     Returns
     -------
     np.ndarray
-        Resampled residuals of the same length as input.
+        Resampled residuals of length size.
 
     Raises
     ------
@@ -53,12 +56,14 @@ def _resample_blocks(residuals, block_length, rng):
     """
     n = len(residuals)
     check_block_length(n, block_length)
-    n_blocks = math.ceil(n / block_length)
+    if size is None:
+        size = n
+    n_blocks = math.ceil(size / block_length)
     max_start = n - block_length
 
     starts = rng.integers(0, max_start + 1, size=n_blocks)
     blocks = [residuals[s : s + block_length] for s in starts]
-    resampled = np.concatenate(blocks)[:n]
+    resampled = np.concatenate(blocks)[:size]
     return resampled
 
 
@@ -76,8 +81,9 @@ class Replication:
     """One replication's outcome: its paths, or the kind of failure.
 
     On success failure is None and mean_path is the refitted model's
-    forecast of the target rows; path is the replication's path, the mean
-    path itself while no noise is drawn. On failure both paths are None and
+    forecast of the target rows; path is the replication's path: the mean
+    path itself when no noise is drawn, the mean path plus the noise draw
+    when it is. On failure both paths are None and
     failure names the kind: "raised" (the refit or forecast raised; detail
     holds the exception), "wrong_length" (no forecast, or one whose length
     differs from the target rows) or "non_finite" (a forecast holding NaN or
@@ -104,16 +110,26 @@ def residual_pool(residuals, startup_rows):
 
 
 def replicate(r, model, fit_df, target_df, fitted, pool, block_length,
-              seed_r, cols, startup_rows=0):
+              seed_r, cols, startup_rows=0, noise=False):
     """Run bootstrap replication r and return its Replication outcome.
 
     Builds the perturbed series: the first startup_rows rows keep their
     observed values, every later row is fitted + block-resampled residuals
     drawn from pool (residual_pool). Then refits a fresh copy of the model
-    on it and forecasts target_df. Every random draw comes from seed_r
-    alone, so replication r's outcome does not depend on which other
-    replications run or in what order. Never raises
-    for a failed refit or forecast: the failure is returned, named.
+    on it and forecasts target_df: the mean path.
+
+    With noise=True the replication also draws one residual per target row,
+    in blocks of block_length from the same pool and the same random stream,
+    after the perturbation's draws, and adds them to the mean path. Because
+    the noise is drawn last, a run with and a run without noise under the
+    same seed share every mean path. The noise is added to the forecast as
+    it stands; it is not passed through the model's dynamics. This makes an
+    interim prediction interval; it has not been shown to reach its stated
+    coverage.
+
+    Every random draw comes from seed_r alone, so replication r's outcome
+    does not depend on which other replications run or in what order. Never
+    raises for a failed refit or forecast: the failure is returned, named.
     """
     rng = np.random.default_rng(seed_r)
     perturbed = fit_df.copy()
@@ -139,7 +155,10 @@ def replicate(r, model, fit_df, target_df, fitted, pool, block_length,
     mean_path = np.asarray(mean_path, dtype=float)
     if not np.all(np.isfinite(mean_path)):
         return Replication(r, failure="non_finite")
-    return Replication(r, mean_path=mean_path, path=mean_path)
+    if not noise:
+        return Replication(r, mean_path=mean_path, path=mean_path)
+    noise_r = _resample_blocks(pool, block_length, rng, size=len(mean_path))
+    return Replication(r, mean_path=mean_path, path=mean_path + noise_r)
 
 
 def _failure_counts(outcomes):
