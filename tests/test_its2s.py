@@ -419,11 +419,21 @@ class TestBootstrap:
         resampled = _resample_blocks(residuals, block_length=5, rng=rng)
         assert len(resampled) == len(residuals)
 
-    def test_resample_blocks_short_residuals(self):
+    def test_resample_blocks_block_not_shorter_than_pool_raises(self):
+        # No silent fallback to resampling single residuals: a block as long
+        # as the pool, or longer, is an error.
         from its2s.bootstrap.mbb import _resample_blocks
         rng = np.random.default_rng(42)
         residuals = np.array([1.0, 2.0, 3.0])
-        resampled = _resample_blocks(residuals, block_length=10, rng=rng)
+        for block_length in (3, 10):
+            with pytest.raises(ValueError, match="shorter than the residual pool"):
+                _resample_blocks(residuals, block_length=block_length, rng=rng)
+
+    def test_resample_blocks_longest_allowed_block(self):
+        from its2s.bootstrap.mbb import _resample_blocks
+        rng = np.random.default_rng(42)
+        residuals = np.array([1.0, 2.0, 3.0])
+        resampled = _resample_blocks(residuals, block_length=2, rng=rng)
         assert len(resampled) == len(residuals)
 
     def test_resample_blocks_reproducibility(self):

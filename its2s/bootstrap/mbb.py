@@ -16,6 +16,19 @@ from .base import BaseBootstrap, BootstrapCIResult
 logger = logging.getLogger(__name__)
 
 
+def check_block_length(n_pool, block_length):
+    """Refuse a block length that leaves no room to move a block.
+
+    A block must be shorter than the residual pool it is drawn from, or
+    every draw would be the same single block. There is no fallback to
+    resampling single residuals: that would silently change the method.
+    """
+    if block_length >= n_pool:
+        raise ValueError(
+            f"block_length {block_length} must be shorter than the residual "
+            f"pool ({n_pool} observations).")
+
+
 def _resample_blocks(residuals, block_length, rng):
     """Resample residuals using moving blocks.
 
@@ -32,13 +45,16 @@ def _resample_blocks(residuals, block_length, rng):
     -------
     np.ndarray
         Resampled residuals of the same length as input.
+
+    Raises
+    ------
+    ValueError
+        If block_length is not shorter than residuals (check_block_length).
     """
     n = len(residuals)
+    check_block_length(n, block_length)
     n_blocks = math.ceil(n / block_length)
     max_start = n - block_length
-
-    if max_start < 1:
-        return rng.choice(residuals, size=n, replace=True)
 
     starts = rng.integers(0, max_start + 1, size=n_blocks)
     blocks = [residuals[s : s + block_length] for s in starts]
@@ -143,6 +159,9 @@ class MovingBlockBootstrap(BaseBootstrap):
 
         fitted_values = model._fit_result.fitted_values
         residuals = model._fit_result.residuals
+        # Checked once here, so a bad length is one clear error rather than a
+        # failure inside every replication.
+        check_block_length(len(residuals), self.block_length)
 
         # Point prediction from original model
         point_pred = model.predict(target_df, target_col=target_col,
