@@ -355,7 +355,13 @@ class TestARIMASpecific:
                                     {"periods": {"split_method": "days",
                                                  "test_days": 360, "post_event_days": 360},
                                      "models": {"arima": {"m": 4, "seasonal": True}},
-                                     "metrics": {"seasonality": 4}}))
+                                     "metrics": {"seasonality": 4},
+                                     # A seasonal fit leaves its D*m start-up
+                                     # rows out of the bootstrap pool; this
+                                     # short quarterly series then has fewer
+                                     # residuals than the default block of 14.
+                                     # The test is about m = 4, not blocks.
+                                     "bootstrap": {"block_length": 4}}))
         assert result.model_name == "arima"
 
 
@@ -388,8 +394,11 @@ class TestARIMASeasonalityAuto:
         n = len(df)
 
         class _Stub:
+            # Stands in for a fitted pmdarima model, which always carries
+            # with_intercept beside its order.
             order = (1, 0, 0)
             seasonal_order = (0, 0, 0, 0)
+            with_intercept = False
 
             def predict_in_sample(self, exogenous=None):
                 return np.zeros(n)
