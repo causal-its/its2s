@@ -97,6 +97,100 @@ def _period_bounds(pconf, post_dates, post_event_start, post_event_end):
     return mask, p_start, p_end
 
 
+def excess_from_paths(observed, point, paths, level, period_masks=()):
+    """Per-step and per-period excess from forecast paths.
+
+    The excess arithmetic shared by every caller that holds bootstrap paths,
+    so each forms its intervals in the same way. Totals are formed within
+    each path and then summarised, never by adding per-step bounds.
+
+    Parameters
+    ----------
+    observed : np.ndarray or None
+        Observed values, shape (n,). None gives NaN excess and bounds.
+    point : np.ndarray
+        Point forecast, shape (n,).
+    paths : np.ndarray
+        Shape (n, n_paths), one column per bootstrap replication.
+    level : float
+        Interval level, e.g. 0.95.
+    period_masks : sequence of np.ndarray
+        Boolean masks of shape (n,), one per period to total.
+
+    Returns
+    -------
+    tuple[list[dict], list[dict]]
+        One dict per step (keys observed, expected, excess, excess_lo,
+        excess_hi, excess_pct, excess_pct_lo, excess_pct_hi), then one dict
+        per mask (keys n_obs, total_observed, total_expected, total_excess,
+        excess_lo, excess_hi, excess_pct).
+    """
+    alpha = 1 - level
+    lo_q = alpha / 2
+    hi_q = 1 - alpha / 2
+
+    steps = []
+    for i in range(len(point)):
+        obs_i = float(observed[i]) if observed is not None else np.nan
+        expected = float(point[i])
+        excess = obs_i - expected
+
+        # Excess bounds: observed minus each path's forecast.
+        if observed is not None:
+            excess_sims = obs_i - paths[i, :]
+            excess_lo = float(np.nanpercentile(excess_sims, 100 * lo_q))
+            excess_hi = float(np.nanpercentile(excess_sims, 100 * hi_q))
+        else:
+            excess_lo = excess_hi = np.nan
+
+        excess_pct = (excess / expected * 100) if expected != 0 else np.nan
+        if observed is not None and expected != 0:
+            pct_sims = excess_sims / expected * 100
+            excess_pct_lo = float(np.nanpercentile(pct_sims, 100 * lo_q))
+            excess_pct_hi = float(np.nanpercentile(pct_sims, 100 * hi_q))
+        else:
+            excess_pct_lo = excess_pct_hi = np.nan
+
+        steps.append({
+            "observed": obs_i,
+            "expected": expected,
+            "excess": excess,
+            "excess_lo": excess_lo,
+            "excess_hi": excess_hi,
+            "excess_pct": excess_pct,
+            "excess_pct_lo": excess_pct_lo,
+            "excess_pct_hi": excess_pct_hi,
+        })
+
+    periods = []
+    for mask in period_masks:
+        p_observed = observed[mask] if observed is not None else None
+        total_observed = float(np.nansum(p_observed)) if p_observed is not None else np.nan
+        total_expected = float(np.nansum(point[mask]))
+        total_excess = total_observed - total_expected
+
+        # Period bounds: total each path over the period, then take quantiles.
+        if observed is not None:
+            sim_totals = total_observed - np.nansum(paths[mask, :], axis=0)
+            excess_lo = float(np.nanpercentile(sim_totals, 100 * lo_q))
+            excess_hi = float(np.nanpercentile(sim_totals, 100 * hi_q))
+        else:
+            excess_lo = excess_hi = np.nan
+
+        periods.append({
+            "n_obs": int(mask.sum()),
+            "total_observed": total_observed,
+            "total_expected": total_expected,
+            "total_excess": total_excess,
+            "excess_lo": excess_lo,
+            "excess_hi": excess_hi,
+            "excess_pct": ((total_excess / total_expected * 100)
+                           if total_expected != 0 else np.nan),
+        })
+
+    return steps, periods
+
+
 def calculate_excess(bootstrap_result, intervention_date, periods_config=None,
                      ci_level=0.95):
     """Calculate per-observation and period-level excess from bootstrap results.
@@ -119,10 +213,6 @@ def calculate_excess(bootstrap_result, intervention_date, periods_config=None,
     -------
     ExcessResult
     """
-    alpha = 1 - ci_level
-    lo_q = alpha / 2
-    hi_q = 1 - alpha / 2
-
     dates = pd.to_datetime(bootstrap_result.dates)
     intervention_date = pd.Timestamp(intervention_date)
 
@@ -138,49 +228,8 @@ def calculate_excess(bootstrap_result, intervention_date, periods_config=None,
     post_conf_lo = bootstrap_result.conf_lo[post_event_mask]
     post_conf_hi = bootstrap_result.conf_hi[post_event_mask]
 
-    # Per-observation excess
-    obs_rows = []
-    for i in range(len(post_dates)):
-        observed = float(post_actual[i]) if post_actual is not None else np.nan
-        expected = float(post_predicted[i])
-        excess = observed - expected
-
-        # Excess CI from bootstrap: observed - sim_predicted for each sim
-        if post_actual is not None:
-            excess_sims = observed - post_pred_matrix[i, :]
-            excess_lo = float(np.nanpercentile(excess_sims, 100 * lo_q))
-            excess_hi = float(np.nanpercentile(excess_sims, 100 * hi_q))
-        else:
-            excess_lo = excess_hi = np.nan
-
-        excess_pct = (excess / expected * 100) if expected != 0 else np.nan
-        if post_actual is not None and expected != 0:
-            pct_sims = excess_sims / expected * 100
-            excess_pct_lo = float(np.nanpercentile(pct_sims, 100 * lo_q))
-            excess_pct_hi = float(np.nanpercentile(pct_sims, 100 * hi_q))
-        else:
-            excess_pct_lo = excess_pct_hi = np.nan
-
-        obs_rows.append({
-            "date": post_dates.iloc[i] if hasattr(post_dates, "iloc") else post_dates[i],
-            "observed": observed,
-            "expected": expected,
-            "expected_ci_lo": float(post_conf_lo[i]),
-            "expected_ci_hi": float(post_conf_hi[i]),
-            "excess": excess,
-            "excess_ci_lo": excess_lo,
-            "excess_ci_hi": excess_hi,
-            "excess_pct": excess_pct,
-            "excess_pct_ci_lo": excess_pct_lo,
-            "excess_pct_ci_hi": excess_pct_hi,
-        })
-
-    obs_excess = pd.DataFrame(obs_rows)
-
-    # Period-level excess
-    period_rows = []
-
-    # Default: the full post-event window
+    # Periods: the full post-event window first, then any configured ones;
+    # a period covering no post-event row is left out.
     all_periods = [{"name": "Full post-event",
                     "start_offset_obs": 0, "end_offset_obs": None}]
     if periods_config:
@@ -189,43 +238,48 @@ def calculate_excess(bootstrap_result, intervention_date, periods_config=None,
     post_event_start = post_dates.min() if hasattr(post_dates, "min") else post_dates[0]
     post_event_end = post_dates.max() if hasattr(post_dates, "max") else post_dates[-1]
 
+    resolved = []
     for pconf in all_periods:
         p_mask, p_start, p_end = _period_bounds(
             pconf, post_dates, post_event_start, post_event_end)
-        if not p_mask.any():
-            continue
+        if p_mask.any():
+            resolved.append((pconf["name"], p_mask, p_start, p_end))
 
-        p_actual = post_actual[p_mask] if post_actual is not None else None
-        p_predicted = post_predicted[p_mask]
-        p_pred_matrix = post_pred_matrix[p_mask, :]
+    steps, periods = excess_from_paths(
+        post_actual, post_predicted, post_pred_matrix, ci_level,
+        [mask for _, mask, _, _ in resolved])
 
-        total_observed = float(np.nansum(p_actual)) if p_actual is not None else np.nan
-        total_expected = float(np.nansum(p_predicted))
-        total_excess = total_observed - total_expected
+    obs_rows = []
+    for i, step in enumerate(steps):
+        obs_rows.append({
+            "date": post_dates.iloc[i] if hasattr(post_dates, "iloc") else post_dates[i],
+            "observed": step["observed"],
+            "expected": step["expected"],
+            "expected_ci_lo": float(post_conf_lo[i]),
+            "expected_ci_hi": float(post_conf_hi[i]),
+            "excess": step["excess"],
+            "excess_ci_lo": step["excess_lo"],
+            "excess_ci_hi": step["excess_hi"],
+            "excess_pct": step["excess_pct"],
+            "excess_pct_ci_lo": step["excess_pct_lo"],
+            "excess_pct_ci_hi": step["excess_pct_hi"],
+        })
+    obs_excess = pd.DataFrame(obs_rows)
 
-        # Period CIs: sum across dates per simulation, then percentile
-        if p_actual is not None:
-            sim_totals = total_observed - np.nansum(p_pred_matrix, axis=0)
-            excess_lo = float(np.nanpercentile(sim_totals, 100 * lo_q))
-            excess_hi = float(np.nanpercentile(sim_totals, 100 * hi_q))
-        else:
-            excess_lo = excess_hi = np.nan
-
-        excess_pct = (total_excess / total_expected * 100) if total_expected != 0 else np.nan
-
+    period_rows = []
+    for (name, _, p_start, p_end), period in zip(resolved, periods):
         period_rows.append({
-            "period": pconf["name"],
+            "period": name,
             "start_date": p_start,
             "end_date": p_end,
-            "n_obs": int(p_mask.sum()),
-            "total_observed": total_observed,
-            "total_expected": total_expected,
-            "total_excess": total_excess,
-            "excess_ci_lo": excess_lo,
-            "excess_ci_hi": excess_hi,
-            "excess_pct": excess_pct,
+            "n_obs": period["n_obs"],
+            "total_observed": period["total_observed"],
+            "total_expected": period["total_expected"],
+            "total_excess": period["total_excess"],
+            "excess_ci_lo": period["excess_lo"],
+            "excess_ci_hi": period["excess_hi"],
+            "excess_pct": period["excess_pct"],
         })
-
     period_excess = pd.DataFrame(period_rows)
 
     return ExcessResult(obs_excess=obs_excess, period_excess=period_excess)

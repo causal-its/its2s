@@ -5,6 +5,7 @@
 import logging
 import math
 import warnings
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -45,30 +46,65 @@ def _resample_blocks(residuals, block_length, rng):
     return resampled
 
 
-def _single_mbb_sim(sim_idx, model, train_df, target_df, fitted_values,
-                     residuals, block_length, target_col, date_col,
-                     covariate_cols, seed):
-    """Run a single MBB simulation."""
-    rng = np.random.default_rng(seed)
+@dataclass(frozen=True)
+class ReplicateColumns:
+    """The column names one replication fits and forecasts with."""
 
-    # Resample residuals and create perturbed training series
-    resampled_resid = _resample_blocks(residuals, block_length, rng)
-    perturbed_y = fitted_values + resampled_resid
+    target: str = "y"
+    date: str = "ds"
+    covariates: list | None = None
 
-    # Build perturbed training DataFrame
-    perturbed_train = train_df.copy()
-    perturbed_train[target_col] = perturbed_y
 
-    # Fit fresh model on perturbed data
-    fresh_model = model.clone_fresh()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        fresh_model.fit(perturbed_train, target_col=target_col,
-                        date_col=date_col, covariate_cols=covariate_cols)
-        pred_result = fresh_model.predict(target_df, target_col=target_col,
-                                          date_col=date_col,
-                                          covariate_cols=covariate_cols)
-    return pred_result.predicted
+@dataclass(frozen=True)
+class Replication:
+    """One replication's outcome: its paths, or the kind of failure.
+
+    On success failure is None and mean_path is the refitted model's
+    forecast of the target rows; path is the replication's path, the mean
+    path itself while no noise is drawn. On failure both paths are None and
+    failure names the kind: "raised" (the refit or forecast raised; detail
+    holds the exception) or "wrong_length" (no forecast, or one whose length
+    differs from the target rows).
+    """
+
+    index: int
+    mean_path: np.ndarray | None = None
+    path: np.ndarray | None = None
+    failure: str | None = None
+    detail: str | None = None
+
+    @property
+    def ok(self):
+        return self.failure is None
+
+
+def replicate(r, model, fit_df, target_df, fitted, residuals, block_length,
+              seed_r, cols):
+    """Run bootstrap replication r and return its Replication outcome.
+
+    Builds the perturbed series fitted + block-resampled residuals, refits
+    a fresh copy of the model on it and forecasts target_df. Every random
+    draw comes from seed_r alone, so replication r's outcome does not
+    depend on which other replications run or in what order. Never raises
+    for a failed refit or forecast: the failure is returned, named.
+    """
+    rng = np.random.default_rng(seed_r)
+    perturbed = fit_df.copy()
+    perturbed[cols.target] = fitted + _resample_blocks(residuals, block_length, rng)
+    try:
+        fresh_model = model.clone_fresh()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            fresh_model.fit(perturbed, target_col=cols.target,
+                            date_col=cols.date, covariate_cols=cols.covariates)
+            mean_path = fresh_model.predict(
+                target_df, target_col=cols.target, date_col=cols.date,
+                covariate_cols=cols.covariates).predicted
+    except Exception as exc:
+        return Replication(r, failure="raised", detail=repr(exc))
+    if mean_path is None or len(mean_path) != len(target_df):
+        return Replication(r, failure="wrong_length")
+    return Replication(r, mean_path=mean_path, path=mean_path)
 
 
 class MovingBlockBootstrap(BaseBootstrap):
@@ -102,55 +138,35 @@ class MovingBlockBootstrap(BaseBootstrap):
 
         base_rng = np.random.default_rng(seed)
         sim_seeds = base_rng.integers(0, 2**31, size=self.n_sim)
+        cols = ReplicateColumns(target_col, date_col, covariate_cols)
 
-        n_dates = len(target_df)
-        pred_matrix = np.full((n_dates, self.n_sim), np.nan)
-        n_successful = 0
-
-        log_interval = max(1, self.n_sim // 10)
+        def run(i):
+            return replicate(i, model, train_df, target_df, fitted_values,
+                             residuals, self.block_length, int(sim_seeds[i]), cols)
 
         try:
-            results = Parallel(n_jobs=self.n_jobs, prefer="threads")(
-                delayed(_single_mbb_sim)(
-                    i, model, train_df, target_df, fitted_values, residuals,
-                    self.block_length, target_col, date_col, covariate_cols,
-                    int(sim_seeds[i])
-                )
-                for i in range(self.n_sim)
+            outcomes = Parallel(n_jobs=self.n_jobs, prefer="threads")(
+                delayed(run)(i) for i in range(self.n_sim)
             )
-            for i, preds in enumerate(results):
-                if preds is not None and len(preds) == n_dates:
-                    pred_matrix[:, i] = preds
-                    n_successful += 1
-                if (i + 1) % log_interval == 0:
-                    logger.info(
-                        "MBB progress: %d / %d simulations processed.",
-                        i + 1, self.n_sim,
-                    )
         except Exception:
             warnings.warn(
                 "Parallel MBB execution failed; falling back to sequential.",
                 UserWarning,
                 stacklevel=2,
             )
-            for i in range(self.n_sim):
-                try:
-                    preds = _single_mbb_sim(
-                        i, model, train_df, target_df, fitted_values,
-                        residuals, self.block_length, target_col, date_col,
-                        covariate_cols, int(sim_seeds[i])
-                    )
-                    if preds is not None and len(preds) == n_dates:
-                        pred_matrix[:, i] = preds
-                        n_successful += 1
-                except Exception:
-                    continue
-                if (i + 1) % log_interval == 0:
-                    logger.info(
-                        "MBB progress: %d / %d simulations processed "
-                        "(%d successful).",
-                        i + 1, self.n_sim, n_successful,
-                    )
+            outcomes = [run(i) for i in range(self.n_sim)]
+
+        # A failed replication leaves its column NaN.
+        pred_matrix = np.full((len(target_df), self.n_sim), np.nan)
+        n_successful = 0
+        log_interval = max(1, self.n_sim // 10)
+        for i, outcome in enumerate(outcomes):
+            if outcome.ok:
+                pred_matrix[:, i] = outcome.mean_path
+                n_successful += 1
+            if (i + 1) % log_interval == 0:
+                logger.info("MBB progress: %d / %d simulations processed.",
+                            i + 1, self.n_sim)
 
         logger.info("MBB: %d / %d simulations successful.", n_successful, self.n_sim)
 
