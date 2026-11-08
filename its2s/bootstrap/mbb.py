@@ -96,8 +96,11 @@ class Replication:
 
 
 def residual_pool(residuals, startup_rows):
-    """The residuals a replication resamples: those after the start-up rows."""
-    return np.asarray(residuals, dtype=float)[startup_rows:]
+    """The residuals a replication resamples: those after the start-up rows,
+    centred on their mean, so resampling them does not shift every perturbed
+    series by that mean."""
+    pool = np.asarray(residuals, dtype=float)[startup_rows:]
+    return pool - pool.mean()
 
 
 def replicate(r, model, fit_df, target_df, fitted, pool, block_length,
