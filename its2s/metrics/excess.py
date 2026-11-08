@@ -111,7 +111,9 @@ def excess_from_paths(observed, point, paths, level, period_masks=()):
     point : np.ndarray
         Point forecast, shape (n,).
     paths : np.ndarray
-        Shape (n, n_paths), one column per bootstrap replication.
+        Shape (n, n_paths), one column per SUCCESSFUL bootstrap replication.
+        Every value must be finite: a failed replication contributes no
+        column, so no path is ever summed or ranked as if NaN were 0.
     level : float
         Interval level, e.g. 0.95.
     period_masks : sequence of np.ndarray
@@ -125,6 +127,13 @@ def excess_from_paths(observed, point, paths, level, period_masks=()):
         per mask (keys n_obs, total_observed, total_expected, total_excess,
         excess_lo, excess_hi, excess_pct).
     """
+    paths = np.asarray(paths, dtype=float)
+    if paths.ndim != 2 or paths.shape[1] == 0:
+        raise ValueError("excess_from_paths needs at least one path.")
+    if not np.all(np.isfinite(paths)):
+        raise ValueError("excess_from_paths was given a non-finite path; "
+                         "failed replications must be removed, not passed as NaN.")
+
     alpha = 1 - level
     lo_q = alpha / 2
     hi_q = 1 - alpha / 2
@@ -138,16 +147,16 @@ def excess_from_paths(observed, point, paths, level, period_masks=()):
         # Excess bounds: observed minus each path's forecast.
         if observed is not None:
             excess_sims = obs_i - paths[i, :]
-            excess_lo = float(np.nanpercentile(excess_sims, 100 * lo_q))
-            excess_hi = float(np.nanpercentile(excess_sims, 100 * hi_q))
+            excess_lo = float(np.percentile(excess_sims, 100 * lo_q))
+            excess_hi = float(np.percentile(excess_sims, 100 * hi_q))
         else:
             excess_lo = excess_hi = np.nan
 
         excess_pct = (excess / expected * 100) if expected != 0 else np.nan
         if observed is not None and expected != 0:
             pct_sims = excess_sims / expected * 100
-            excess_pct_lo = float(np.nanpercentile(pct_sims, 100 * lo_q))
-            excess_pct_hi = float(np.nanpercentile(pct_sims, 100 * hi_q))
+            excess_pct_lo = float(np.percentile(pct_sims, 100 * lo_q))
+            excess_pct_hi = float(np.percentile(pct_sims, 100 * hi_q))
         else:
             excess_pct_lo = excess_pct_hi = np.nan
 
@@ -171,9 +180,9 @@ def excess_from_paths(observed, point, paths, level, period_masks=()):
 
         # Period bounds: total each path over the period, then take quantiles.
         if observed is not None:
-            sim_totals = total_observed - np.nansum(paths[mask, :], axis=0)
-            excess_lo = float(np.nanpercentile(sim_totals, 100 * lo_q))
-            excess_hi = float(np.nanpercentile(sim_totals, 100 * hi_q))
+            sim_totals = total_observed - np.sum(paths[mask, :], axis=0)
+            excess_lo = float(np.percentile(sim_totals, 100 * lo_q))
+            excess_hi = float(np.percentile(sim_totals, 100 * hi_q))
         else:
             excess_lo = excess_hi = np.nan
 

@@ -63,8 +63,9 @@ class Replication:
     forecast of the target rows; path is the replication's path, the mean
     path itself while no noise is drawn. On failure both paths are None and
     failure names the kind: "raised" (the refit or forecast raised; detail
-    holds the exception) or "wrong_length" (no forecast, or one whose length
-    differs from the target rows).
+    holds the exception), "wrong_length" (no forecast, or one whose length
+    differs from the target rows) or "non_finite" (a forecast holding NaN or
+    an infinite value). A failed replication contributes no path.
     """
 
     index: int
@@ -104,7 +105,19 @@ def replicate(r, model, fit_df, target_df, fitted, residuals, block_length,
         return Replication(r, failure="raised", detail=repr(exc))
     if mean_path is None or len(mean_path) != len(target_df):
         return Replication(r, failure="wrong_length")
+    mean_path = np.asarray(mean_path, dtype=float)
+    if not np.all(np.isfinite(mean_path)):
+        return Replication(r, failure="non_finite")
     return Replication(r, mean_path=mean_path, path=mean_path)
+
+
+def _failure_counts(outcomes):
+    """'n kind' for each failure kind present, e.g. '50 non_finite'."""
+    counts = {}
+    for o in outcomes:
+        if not o.ok:
+            counts[o.failure] = counts.get(o.failure, 0) + 1
+    return ", ".join(f"{n} {kind}" for kind, n in sorted(counts.items()))
 
 
 class MovingBlockBootstrap(BaseBootstrap):
@@ -156,14 +169,17 @@ class MovingBlockBootstrap(BaseBootstrap):
             )
             outcomes = [run(i) for i in range(self.n_sim)]
 
-        # A failed replication leaves its column NaN.
-        pred_matrix = np.full((len(target_df), self.n_sim), np.nan)
-        n_successful = 0
+        # A failed replication contributes no column: the matrix holds the
+        # successful paths only, in replication order.
+        paths = [o.mean_path for o in outcomes if o.ok]
+        n_successful = len(paths)
+        if n_successful == 0:
+            raise ValueError(
+                f"All {self.n_sim} bootstrap replications failed "
+                f"({_failure_counts(outcomes)}); no interval can be formed.")
+        pred_matrix = np.column_stack(paths)
         log_interval = max(1, self.n_sim // 10)
-        for i, outcome in enumerate(outcomes):
-            if outcome.ok:
-                pred_matrix[:, i] = outcome.mean_path
-                n_successful += 1
+        for i in range(self.n_sim):
             if (i + 1) % log_interval == 0:
                 logger.info("MBB progress: %d / %d simulations processed.",
                             i + 1, self.n_sim)
