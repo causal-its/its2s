@@ -5,10 +5,11 @@
 #   confirmed fitted values, nothing else, and touches no file.
 #   estimate_excess is the public step: it checks every argument and refuses
 #   before any bootstrap, confirms the saved model reproduces the fitted
-#   values step 3 sealed, then estimates and seals the estimate record under
+#   values step 3 sealed, then estimates, seals the estimate record and
+#   writes it with its report, two CSVs and the figure under
 #   04_estimate/<run_label>/.
 # Usage: est = its2s.estimate_excess(fit, data=df, run_label="main")
-# Dependencies: numpy, pandas
+# Dependencies: numpy, pandas, matplotlib
 
 import numbers
 import os
@@ -32,8 +33,12 @@ from .fitting import Columns, predict_family, rows_in, span_of, utc_now, verify_
 from .metrics.excess import excess_from_paths
 from .models.base import _versions
 from .models.families import get_family, startup_rows_of
-from .estimate_record import (RECORD_DIR, RECORD_FILE, EstimateRecord, build_record,
-                              caveats)
+from .estimate_record import (RECORD_DIR, RECORD_FILE, REPORT_FILE, EstimateRecord,
+                              build_record, caveats)
+from .estimate_tables import (COUNTERFACTUAL_FILE, EXCESS_TABLE_FILE, counterfactual_table,
+                              excess_table, to_csv_text)
+from .outputs.estimate_plot import (PLOT_FILE, STYLE_COLORS, STYLE_FONTS, STYLE_KEYS,
+                                    counterfactual_figure, resolve_style)
 from .records import atomic_directory, record_json, stamped_on
 
 FULL_WINDOW = "full_window"
@@ -50,11 +55,6 @@ MIN_BEYOND_BOUND = 5
 MIN_BLOCKS = 10
 NOISE_POOL = "in-sample residuals, start-up rows excluded, centred"
 NOTHING = "Nothing has been estimated."
-
-# The figure's style keys and what each value must be.
-STYLE_COLORS = ("observed", "counterfactual", "event", "training", "test", "post_event")
-STYLE_FONTS = ("title", "axis_label", "tick", "legend")
-STYLE_KEYS = ("colors", "fonts", "figsize", "dpi")
 
 
 class EstimateError(ValueError):
@@ -494,6 +494,25 @@ def _provenance(fit, label_dir):
     }
 
 
+def _write_run(run_dir, record, handoff, data):
+    """Write the record, report, both CSVs and the figure, read-only, under
+    a new run directory in one move, so a failure part-way leaves nothing
+    behind. Returns the report text."""
+    report = EstimateRecord.from_dict(record).report()
+    table = counterfactual_table(record, handoff, data)
+    fig = counterfactual_figure(record, table, record["presentation"]["resolved"],
+                                handoff["data"]["outcome_col"])
+    texts = ((RECORD_FILE, record_json(record)), (REPORT_FILE, report),
+             (COUNTERFACTUAL_FILE, to_csv_text(table)),
+             (EXCESS_TABLE_FILE, to_csv_text(excess_table(record))))
+    with atomic_directory(run_dir) as tmp:
+        for name, text in texts:
+            with open(os.path.join(tmp, name), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        fig.savefig(os.path.join(tmp, PLOT_FILE), dpi=fig.dpi, bbox_inches="tight")
+    return report
+
+
 # ---------------------------------------------------------------------------
 # The public step
 # ---------------------------------------------------------------------------
@@ -512,7 +531,9 @@ def estimate_excess(fit, data, *, sub_periods=None, interval_type="prediction",
     fitted values step 3 sealed. Then forecast the post-event window, run
     the moving block bootstrap and form per-step and per-period excess and
     percent excess with intervals of the requested type; seal the estimate
-    record and write it read-only under 04_estimate/<run_label>/.
+    record; write it, its report, 04-counterfactual.csv, 04-excess_table.csv
+    and 04-counterfactual.png read-only under 04_estimate/<run_label>/; print
+    the report.
 
     Every interval is labelled not validated: its coverage has not been
     measured and it is known to undercover.
@@ -590,13 +611,11 @@ def estimate_excess(fit, data, *, sub_periods=None, interval_type="prediction",
         "family": family,
         **body,
         "caveats": caveats(interval_type, family),
-        "presentation": {"style": style},
+        "presentation": {"style": style, "resolved": resolve_style(style)},
         "stamps": fit.to_dict()["stamps"],
         "provenance": provenance,
         "data_fingerprint": fp,
     })
-    record_path = os.path.join(run_dir, RECORD_FILE)
-    with atomic_directory(run_dir) as tmp:
-        with open(os.path.join(tmp, RECORD_FILE), "w", encoding="utf-8") as fh:
-            fh.write(record_json(record))
-    return EstimateRecord.from_dict(record, path=record_path)
+    report = _write_run(run_dir, record, handoff, data)
+    print(report, end="")
+    return EstimateRecord.from_dict(record, path=os.path.join(run_dir, RECORD_FILE))

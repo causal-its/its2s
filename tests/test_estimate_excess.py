@@ -4,9 +4,9 @@
 #   the saved model must reproduce the fitted values step 3 sealed, failed
 #   replications are removed and counted, period totals and percent excess are
 #   formed within each path, and the sealed record round-trips and names the
-#   four records it descends from. Synthetic data; stand-in families except
-#   where a real family's in-sample fit is the point. The report, CSVs and
-#   figure are tested with the code that writes them.
+#   four records it descends from; the report, both CSVs and the figure are
+#   written beside the record and agree with it. Synthetic data; stand-in
+#   families except where a real family's in-sample fit is the point.
 # Usage: pytest tests/test_estimate_excess.py
 # Dependencies: pytest, numpy, pandas
 
@@ -19,7 +19,9 @@ import warnings
 from datetime import date
 
 import numpy as np
+import pandas as pd
 import pytest
+from matplotlib.colors import to_hex
 
 import its2s.check as check_module
 import its2s.estimate as estimate_module
@@ -31,7 +33,10 @@ from its2s import (CandidatesRecord, CheckRecord, Design, DesignRecord, DesignWa
                    declare_design, estimate_excess)
 from its2s.bootstrap.mbb import Replication, replicate, replication_seeds
 from its2s.estimate import estimate
-from its2s.estimate_record import RECORD_DIR, RECORD_FILE
+from its2s.estimate_record import RECORD_DIR, RECORD_FILE, REPORT_FILE
+from its2s.estimate_tables import (COUNTERFACTUAL_FILE, EXCESS_TABLE_FILE, bound_columns,
+                                   level_percent, to_csv_text)
+from its2s.outputs.estimate_plot import DEFAULT_STYLE, PLOT_FILE
 from its2s.metrics.excess import (PCT_FORECAST_NOT_POSITIVE, PCT_PATH_NOT_POSITIVE,
                                   excess_from_paths)
 from its2s.records import seal_record
@@ -74,11 +79,12 @@ def family(monkeypatch):
     return cls
 
 
-def _declare(tmp, label="heat2026", output_dir=None, sub_periods=SUB_PERIODS):
+def _declare(tmp, label="heat2026", output_dir=None, sub_periods=SUB_PERIODS,
+             split=(("train_obs", 129),)):
     d = Design(_frame(), "week", "deaths", None, EVENT, H, 42,
                str(tmp) if output_dir is None else output_dir, label)
     d.set_seasonality(cycles=["annual"])
-    d.add_split("sp1", train_obs=129, test_obs=52, primary=True)
+    d.add_split("sp1", test_obs=52, primary=True, **dict(split))
     d.add_cv("cv1", n_folds=3, fold_eval_obs=6)
     d.add_family("prophet_xgb", n_trials=3)
     for name, start, end in sub_periods:
@@ -596,6 +602,145 @@ class TestRecord:
         est = _est(fitted)
         assert dict(est.handoff) == {}
         assert est.to_dict()["stamps"] == fitted.to_dict()["stamps"]
+
+
+# ---------------------------------------------------------------------------
+# The report, the CSVs and the figure
+# ---------------------------------------------------------------------------
+
+OUTPUT_FILES = sorted([RECORD_FILE, REPORT_FILE, COUNTERFACTUAL_FILE, EXCESS_TABLE_FILE,
+                       PLOT_FILE])
+
+
+def _read(est, name):
+    with open(os.path.join(os.path.dirname(est.path), name), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _csv(est, name):
+    return pd.read_csv(os.path.join(os.path.dirname(est.path), name),
+                       keep_default_na=False, na_values=[""])
+
+
+class TestOutputs:
+
+    def test_the_five_files_are_written_read_only(self, fitted):
+        run_dir = os.path.dirname(_est(fitted).path)
+        assert sorted(os.listdir(run_dir)) == OUTPUT_FILES
+        for name in OUTPUT_FILES:
+            assert not os.stat(os.path.join(run_dir, name)).st_mode & stat.S_IWUSR
+
+    def test_the_report_is_rendered_from_the_record_byte_for_byte(self, fitted):
+        est = _est(fitted)
+        run_dir = os.path.dirname(est.path)
+        assert EstimateRecord.load(run_dir).report() == _read(est, REPORT_FILE)
+
+    def test_the_report_carries_every_caveat_that_applies(self, fitted):
+        for kind in ("prediction", "confidence"):
+            est = _est(fitted, interval_type=kind, run_label=kind)
+            flat = " ".join(_read(est, REPORT_FILE).split())
+            assert est.caveats and all(c in flat for c in est.caveats)
+            assert f"95% {kind} interval, NOT VALIDATED" in flat
+
+    def test_excess_table_equals_the_csv(self, fitted):
+        est = _est(fitted)
+        loaded = EstimateRecord.load(est.path)
+        assert to_csv_text(loaded.excess_table()) == _read(est, EXCESS_TABLE_FILE)
+        table = est.excess_table()
+        assert list(table["period"]) == ["full_window", "early", "late"]
+        assert list(table["last"]) == ["2026-07-27", "2026-07-06", "2026-07-27"]
+
+    @pytest.mark.parametrize("level,tag", [(0.95, "95"), (0.975, "97_5"), (0.57, "57"),
+                                           (0.5, "50")])
+    def test_bound_columns_name_type_and_level_in_full(self, level, tag):
+        interval = {"type": "confidence", "level": level}
+        assert bound_columns("excess", interval) == (f"excess_confidence{tag}_lo",
+                                                     f"excess_confidence{tag}_hi")
+
+    def test_level_percent_is_from_the_decimal_string(self):
+        assert 0.57 * 100 != 57
+        assert level_percent(0.57) == "57"
+        assert level_percent(0.975) == "97.5"
+
+    def test_csv_headers_carry_the_interval(self, fitted):
+        est = _est(fitted, interval_type="confidence", level=0.975)
+        cf = _csv(est, COUNTERFACTUAL_FILE)
+        assert list(cf.columns) == [
+            "date", "window", "observed", "forecast",
+            "counterfactual_confidence97_5_lo", "counterfactual_confidence97_5_hi",
+            "excess", "excess_confidence97_5_lo", "excess_confidence97_5_hi",
+            "excess_pct", "excess_pct_confidence97_5_lo", "excess_pct_confidence97_5_hi"]
+        assert list(_csv(est, EXCESS_TABLE_FILE).columns) == [
+            "period", "first", "last", "n", "observed", "forecast",
+            "excess", "excess_confidence97_5_lo", "excess_confidence97_5_hi",
+            "excess_pct", "excess_pct_confidence97_5_lo", "excess_pct_confidence97_5_hi",
+            "point_outside_interval", "median_path_minus_point"]
+
+    def test_counterfactual_rows_windows_and_empty_pre_event_columns(self, fitted):
+        est = _est(fitted)
+        cf = _csv(est, COUNTERFACTUAL_FILE)
+        df = _frame()
+        df = df[df["week"] < "2026-08-03"]  # the data runs on past the post-event window
+        assert len(cf) == len(df) == FIT_ROWS + H
+        assert cf["date"].iloc[0] == "2023-01-02" and cf["date"].iloc[-1] == "2026-07-27"
+        assert list(cf["window"].value_counts().sort_index().items()) == [
+            ("post_event", H), ("test", 52), ("training", 129)]
+        np.testing.assert_array_equal(cf["observed"], df["deaths"].astype(float))
+        before = cf[cf["window"] != "post_event"]
+        assert before.drop(columns=["date", "window", "observed"]).isna().all().all()
+        post = cf[cf["window"] == "post_event"]
+        assert not post.isna().any().any()
+        np.testing.assert_allclose(post["excess"], [s["excess"] for s in est.per_step])
+
+    def test_rows_before_train_start_are_labelled_before_training(self, tmp_path, family):
+        fit = _chain(tmp_path, split=(("train_start", "2023-03-06"), ("train_obs", 120)))
+        cf = _csv(_est(fit), COUNTERFACTUAL_FILE)
+        assert (cf["window"].iloc[:9] == "before_training").all()
+        assert cf["window"].iloc[9] == "training"
+
+    def test_style_reaches_the_figure_and_is_recorded(self, fitted, monkeypatch):
+        drawn = []
+        real = estimate_module.counterfactual_figure
+
+        def keep(*args):
+            drawn.append(real(*args))
+            return drawn[-1]
+        monkeypatch.setattr(estimate_module, "counterfactual_figure", keep)
+        style = {"colors": {"observed": "#123456"}, "figsize": (8, 4), "dpi": 72}
+        est = _est(fitted, style=style)
+        fig = drawn[0]
+        assert fig.dpi == 72
+        assert tuple(fig.get_size_inches()) == (8, 4)
+        assert to_hex(fig.axes[0].lines[0].get_color()) == "#123456"
+        resolved = est.to_dict()["presentation"]["resolved"]
+        assert est.presentation["style"]["dpi"] == 72
+        assert resolved["colors"]["observed"] == "#123456"
+        assert resolved["colors"]["event"] == DEFAULT_STYLE["colors"]["event"]
+        assert resolved["figsize"] == [8, 4]
+
+    def test_the_figure_names_the_interval_and_draws_no_fit_line(self, fitted,
+                                                                  monkeypatch):
+        drawn = []
+        real = estimate_module.counterfactual_figure
+        monkeypatch.setattr(estimate_module, "counterfactual_figure",
+                            lambda *a: drawn.append(real(*a)) or drawn[-1])
+        _est(fitted, interval_type="confidence", level=0.9)
+        ax = drawn[0].axes[0]
+        labels = ax.get_legend_handles_labels()[1]
+        assert "90% confidence interval, not validated" in labels
+        assert "test (used in the final fit)" in labels
+        # observed and the counterfactual forecast; the event line has two points
+        forecast = [ln for ln in ax.lines if ln.get_label() == "counterfactual forecast"]
+        assert len(forecast[0].get_xdata()) == H
+
+    def test_a_failure_while_writing_leaves_nothing(self, fitted, monkeypatch):
+        def broken(*args):
+            raise RuntimeError("drawing failed")
+        monkeypatch.setattr(estimate_module, "counterfactual_figure", broken)
+        with pytest.raises(RuntimeError, match="drawing failed"):
+            _est(fitted)
+        root = _estimate_dir(fitted)
+        assert not os.path.exists(root) or os.listdir(root) == []
 
 
 # ---------------------------------------------------------------------------

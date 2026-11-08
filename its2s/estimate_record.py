@@ -15,6 +15,7 @@ from .records import SealedRecord, seal_record
 SCHEMA_VERSION = 1
 RECORD_DIR = "04_estimate"
 RECORD_FILE = "04-estimate.json"
+REPORT_FILE = "04-estimate_report.txt"
 
 # The caveats every report carries until the interval method is rebuilt and
 # its coverage measured. Each is (applies, text); applies takes the interval
@@ -98,3 +99,19 @@ class EstimateRecord(SealedRecord):
         if os.path.isdir(path):
             path = os.path.join(path, cls.RECORD_FILE)
         return path
+
+    def report(self):
+        """The text report, exactly as written to 04-estimate_report.txt."""
+        from .estimate_report import render_report
+        return render_report(self.to_dict())
+
+    def excess_table(self):
+        """One row per period, the same columns and values as
+        04-excess_table.csv, rendered from this record's fields.
+
+        Returns
+        -------
+        pd.DataFrame
+        """
+        from .estimate_tables import excess_table
+        return excess_table(self.to_dict())
