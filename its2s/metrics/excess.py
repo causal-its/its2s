@@ -97,7 +97,38 @@ def _period_bounds(pconf, post_dates, post_event_start, post_event_end):
     return mask, p_start, p_end
 
 
-def excess_from_paths(observed, point, paths, level, period_masks=()):
+# Why a percent excess is empty under percent="within_path": the point
+# forecast it divides by is not positive, or some path's denominator is not.
+PCT_FORECAST_NOT_POSITIVE = "forecast_not_positive"
+PCT_PATH_NOT_POSITIVE = "path_not_positive"
+
+
+def _quantiles(values, lo_q, hi_q):
+    return (float(np.percentile(values, 100 * lo_q)),
+            float(np.percentile(values, 100 * hi_q)))
+
+
+def _within_path_pct(observed, point, path_values, lo_q, hi_q):
+    """Percent excess formed within each path, then summarised.
+
+    The point is (observed - point) / point * 100; the bounds are quantiles
+    of (observed - path) / path * 100 over the paths. A ratio is defined only
+    over a positive denominator, and no path is dropped to make one so: the
+    point and bounds are None when the point is not positive, the bounds
+    alone when any path is not. Returns (pct, lo, hi, reason), reason None
+    when nothing is empty.
+    """
+    if not point > 0:
+        return None, None, None, PCT_FORECAST_NOT_POSITIVE
+    pct = (observed - point) / point * 100
+    if not np.all(path_values > 0):
+        return pct, None, None, PCT_PATH_NOT_POSITIVE
+    lo, hi = _quantiles((observed - path_values) / path_values * 100, lo_q, hi_q)
+    return pct, lo, hi, None
+
+
+def excess_from_paths(observed, point, paths, level, period_masks=(),
+                      percent="point"):
     """Per-step and per-period excess from forecast paths.
 
     The excess arithmetic shared by every caller that holds bootstrap paths,
@@ -118,21 +149,36 @@ def excess_from_paths(observed, point, paths, level, period_masks=()):
         Interval level, e.g. 0.95.
     period_masks : sequence of np.ndarray
         Boolean masks of shape (n,), one per period to total.
+    percent : str
+        "point" (the old path's): percent bounds divide each path's excess
+        by the point forecast, and periods carry no percent bounds.
+        "within_path" (step 4's): each path's excess is divided by that
+        path's own counterfactual, per step and per period total, and the
+        result summarised; see _within_path_pct for when it is empty.
 
     Returns
     -------
     tuple[list[dict], list[dict]]
-        One dict per step (keys observed, expected, excess, excess_lo,
-        excess_hi, excess_pct, excess_pct_lo, excess_pct_hi), then one dict
-        per mask (keys n_obs, total_observed, total_expected, total_excess,
-        excess_lo, excess_hi, excess_pct).
+        One dict per step (keys observed, expected, counterfactual_lo,
+        counterfactual_hi, excess, excess_lo, excess_hi, excess_pct,
+        excess_pct_lo, excess_pct_hi), then one dict per mask (keys n_obs,
+        total_observed, total_expected, total_excess, excess_lo, excess_hi,
+        excess_pct, point_outside_interval, median_path_minus_point). Under
+        "within_path" each step and period also carries excess_pct_null,
+        the reason its percent is empty or None, and periods carry
+        excess_pct_lo and excess_pct_hi.
     """
+    if percent not in ("point", "within_path"):
+        raise ValueError(f"percent must be 'point' or 'within_path'; got {percent!r}.")
+    within = percent == "within_path"
     paths = np.asarray(paths, dtype=float)
     if paths.ndim != 2 or paths.shape[1] == 0:
         raise ValueError("excess_from_paths needs at least one path.")
     if not np.all(np.isfinite(paths)):
         raise ValueError("excess_from_paths was given a non-finite path; "
                          "failed replications must be removed, not passed as NaN.")
+    if within and observed is None:
+        raise ValueError("percent='within_path' needs the observed values.")
 
     alpha = 1 - level
     lo_q = alpha / 2
@@ -143,33 +189,31 @@ def excess_from_paths(observed, point, paths, level, period_masks=()):
         obs_i = float(observed[i]) if observed is not None else np.nan
         expected = float(point[i])
         excess = obs_i - expected
+        cf_lo, cf_hi = _quantiles(paths[i, :], lo_q, hi_q)
+        step = {"observed": obs_i, "expected": expected,
+                "counterfactual_lo": cf_lo, "counterfactual_hi": cf_hi,
+                "excess": excess}
 
         # Excess bounds: observed minus each path's forecast.
         if observed is not None:
             excess_sims = obs_i - paths[i, :]
-            excess_lo = float(np.percentile(excess_sims, 100 * lo_q))
-            excess_hi = float(np.percentile(excess_sims, 100 * hi_q))
+            excess_lo, excess_hi = _quantiles(excess_sims, lo_q, hi_q)
         else:
             excess_lo = excess_hi = np.nan
+        step["excess_lo"], step["excess_hi"] = excess_lo, excess_hi
 
-        excess_pct = (excess / expected * 100) if expected != 0 else np.nan
-        if observed is not None and expected != 0:
-            pct_sims = excess_sims / expected * 100
-            excess_pct_lo = float(np.percentile(pct_sims, 100 * lo_q))
-            excess_pct_hi = float(np.percentile(pct_sims, 100 * hi_q))
+        if within:
+            (step["excess_pct"], step["excess_pct_lo"], step["excess_pct_hi"],
+             step["excess_pct_null"]) = _within_path_pct(obs_i, expected, paths[i, :],
+                                                          lo_q, hi_q)
         else:
-            excess_pct_lo = excess_pct_hi = np.nan
-
-        steps.append({
-            "observed": obs_i,
-            "expected": expected,
-            "excess": excess,
-            "excess_lo": excess_lo,
-            "excess_hi": excess_hi,
-            "excess_pct": excess_pct,
-            "excess_pct_lo": excess_pct_lo,
-            "excess_pct_hi": excess_pct_hi,
-        })
+            step["excess_pct"] = (excess / expected * 100) if expected != 0 else np.nan
+            if observed is not None and expected != 0:
+                step["excess_pct_lo"], step["excess_pct_hi"] = _quantiles(
+                    excess_sims / expected * 100, lo_q, hi_q)
+            else:
+                step["excess_pct_lo"] = step["excess_pct_hi"] = np.nan
+        steps.append(step)
 
     periods = []
     for mask in period_masks:
@@ -177,25 +221,35 @@ def excess_from_paths(observed, point, paths, level, period_masks=()):
         total_observed = float(np.nansum(p_observed)) if p_observed is not None else np.nan
         total_expected = float(np.nansum(point[mask]))
         total_excess = total_observed - total_expected
+        path_totals = np.sum(paths[mask, :], axis=0)
 
         # Period bounds: total each path over the period, then take quantiles.
         if observed is not None:
-            sim_totals = total_observed - np.sum(paths[mask, :], axis=0)
-            excess_lo = float(np.percentile(sim_totals, 100 * lo_q))
-            excess_hi = float(np.percentile(sim_totals, 100 * hi_q))
+            excess_lo, excess_hi = _quantiles(total_observed - path_totals, lo_q, hi_q)
         else:
             excess_lo = excess_hi = np.nan
 
-        periods.append({
+        period = {
             "n_obs": int(mask.sum()),
             "total_observed": total_observed,
             "total_expected": total_expected,
             "total_excess": total_excess,
             "excess_lo": excess_lo,
             "excess_hi": excess_hi,
-            "excess_pct": ((total_excess / total_expected * 100)
-                           if total_expected != 0 else np.nan),
-        })
+            # The point estimate outside its own interval: the paths are
+            # shifted off the point forecast.
+            "point_outside_interval": bool(total_excess < excess_lo
+                                           or total_excess > excess_hi),
+            "median_path_minus_point": float(np.median(path_totals) - total_expected),
+        }
+        if within:
+            (period["excess_pct"], period["excess_pct_lo"], period["excess_pct_hi"],
+             period["excess_pct_null"]) = _within_path_pct(
+                total_observed, total_expected, path_totals, lo_q, hi_q)
+        else:
+            period["excess_pct"] = ((total_excess / total_expected * 100)
+                                    if total_expected != 0 else np.nan)
+        periods.append(period)
 
     return steps, periods
 

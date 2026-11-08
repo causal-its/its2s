@@ -9,7 +9,7 @@ import numpy as np
 import pmdarima as pm
 
 from .base import BaseModel, FitResult, PredictionResult
-from .families import arima_period, get_family
+from .families import arima_period, get_family, startup_rows_of
 
 # auto_arima's own starting orders. It raises when a bound is below its start
 # (and when max_d is 0), which tuning would score as inf and silently lose
@@ -117,9 +117,31 @@ class ARIMAModel(BaseModel):
         residuals are about the observations themselves."""
         if self._fixed_order is None:
             raise ValueError("startup_rows needs a fitted or loaded model.")
-        d = self._fixed_order[1]
-        _, D, _, m = self._fixed_seasonal_order
-        return int(d + D * m)
+        return startup_rows_of(self._fixed_order, self._fixed_seasonal_order)
+
+    def in_sample(self, fit_df, target_col="y", date_col="ds", covariate_cols=None):
+        """The held model's in-sample fitted values on fit_df.
+
+        pmdarima's predict_in_sample takes no rows: it returns the fit over
+        the observations the model was fit on. So fit_df's length is checked
+        against the model's own count of observations, and a mismatch
+        raises rather than returning values for other rows.
+        """
+        if self._model is None:
+            raise ValueError("in_sample needs a fitted or loaded model.")
+        covariate_cols = covariate_cols or self._covariate_cols
+        nobs = int(self._model.nobs_)
+        if len(fit_df) != nobs:
+            raise ValueError(
+                f"The ARIMA model was fit on {nobs} observations; in_sample was "
+                f"given {len(fit_df)} rows.")
+        exog = fit_df[covariate_cols].values if covariate_cols else None
+        fitted = np.asarray(self._model.predict_in_sample(X=exog), dtype=float)
+        if len(fitted) != nobs:
+            raise ValueError(
+                f"The ARIMA model returned {len(fitted)} in-sample values for "
+                f"{nobs} observations.")
+        return fitted
 
     def clone_fresh(self):
         return ARIMAModel(

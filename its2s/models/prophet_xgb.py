@@ -4,6 +4,7 @@
 
 import copy
 
+import numpy as np
 import pandas as pd
 from prophet import Prophet
 from prophet.serialize import model_from_json, model_to_json
@@ -123,6 +124,15 @@ class ProphetXGBHybridModel(BaseModel):
             predicted=combined,
             actual=actual,
         )
+
+    def in_sample(self, fit_df, target_col="y", date_col="ds", covariate_cols=None):
+        """The fitted values on fit_df: the same Prophet and XGBoost calls
+        fit() makes for its fitted values, on a fitted or loaded model."""
+        if self._prophet is None:
+            raise ValueError("in_sample needs a fitted or loaded model.")
+        return np.asarray(self.predict(fit_df, target_col=target_col, date_col=date_col,
+                                       covariate_cols=covariate_cols).predicted,
+                          dtype=float)
 
     def clone_fresh(self):
         return ProphetXGBHybridModel(params=copy.deepcopy(self.params),

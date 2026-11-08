@@ -13,6 +13,7 @@ import os
 import shutil
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from types import MappingProxyType
 
 SEAL_ALGORITHM = "sha256"
@@ -169,3 +170,15 @@ def make_read_only(directory):
     for root, _dirs, files in os.walk(directory):
         for name in files:
             os.chmod(os.path.join(root, name), 0o444)
+
+
+def stamped_on(record_file, key, directory):
+    """The date a step's existing output was made: the date part of the
+    record's own timestamp under key, else the directory's modification
+    time when the record cannot be read."""
+    try:
+        with open(record_file, encoding="utf-8") as fh:
+            return json.load(fh)[key][:10]
+    except (OSError, ValueError, KeyError, TypeError):
+        mtime = os.path.getmtime(directory)
+        return datetime.fromtimestamp(mtime, tz=timezone.utc).date().isoformat()

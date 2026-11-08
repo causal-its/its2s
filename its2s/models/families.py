@@ -207,6 +207,24 @@ def arima_period(seasonality):
     return m
 
 
+def startup_rows_of(order, seasonal_order):
+    """Leading fit rows with no forecast error in the ordinary sense: d + D*m.
+
+    A model differenced d times, plus D times seasonally at period m, has no
+    in-sample prediction for its first d + D*m rows, so their residuals
+    measure the series' level, not an error. order is (p, d, q) and
+    seasonal_order (P, D, Q, m), as ARIMA's selected structure states them;
+    None for both (a family that selects no order) gives 0. Lives here,
+    import-free, so step 4 can size the residual pool from the fit record
+    before loading the model.
+    """
+    if order is None:
+        return 0
+    _, d, _ = order
+    _, D, _, m = seasonal_order
+    return int(d + D * m)
+
+
 @dataclass(frozen=True)
 class ResolvedSpace:
     """A family's search space after fixed= and bounds= are applied.

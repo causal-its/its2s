@@ -5,7 +5,8 @@
 import logging
 import math
 import warnings
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -95,10 +96,23 @@ class Replication:
     path: np.ndarray | None = None
     failure: str | None = None
     detail: str | None = None
+    # The exception's class name when failure is "raised".
+    exception: str | None = None
+    # Warnings the refit and forecast raised, counted by category name.
+    warnings: dict = field(default_factory=dict)
 
     @property
     def ok(self):
         return self.failure is None
+
+
+def replication_seeds(seed, n):
+    """The n per-replication seeds drawn from one bootstrap seed.
+
+    Replication r's seed is the r-th draw of a stream fixed by seed, so it
+    does not depend on how many replications run after it.
+    """
+    return [int(s) for s in np.random.default_rng(seed).integers(0, 2**31, size=n)]
 
 
 def residual_pool(residuals, startup_rows):
@@ -130,6 +144,8 @@ def replicate(r, model, fit_df, target_df, fitted, pool, block_length,
     Every random draw comes from seed_r alone, so replication r's outcome
     does not depend on which other replications run or in what order. Never
     raises for a failed refit or forecast: the failure is returned, named.
+    Warnings the refit and forecast raise are counted by category on the
+    outcome, not shown.
     """
     rng = np.random.default_rng(seed_r)
     perturbed = fit_df.copy()
@@ -139,26 +155,32 @@ def replicate(r, model, fit_df, target_df, fitted, pool, block_length,
         observed[:k],
         np.asarray(fitted, dtype=float)[k:] + _resample_blocks(pool, block_length, rng),
     ])
+    counts = Counter()
     try:
         fresh_model = model.clone_fresh()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            fresh_model.fit(perturbed, target_col=cols.target,
-                            date_col=cols.date, covariate_cols=cols.covariates)
-            mean_path = fresh_model.predict(
-                target_df, target_col=cols.target, date_col=cols.date,
-                covariate_cols=cols.covariates).predicted
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                fresh_model.fit(perturbed, target_col=cols.target,
+                                date_col=cols.date, covariate_cols=cols.covariates)
+                mean_path = fresh_model.predict(
+                    target_df, target_col=cols.target, date_col=cols.date,
+                    covariate_cols=cols.covariates).predicted
+            finally:
+                counts.update(w.category.__name__ for w in caught)
     except Exception as exc:
-        return Replication(r, failure="raised", detail=repr(exc))
+        return Replication(r, failure="raised", detail=repr(exc),
+                           exception=type(exc).__name__, warnings=dict(counts))
+    seen = dict(counts)
     if mean_path is None or len(mean_path) != len(target_df):
-        return Replication(r, failure="wrong_length")
+        return Replication(r, failure="wrong_length", warnings=seen)
     mean_path = np.asarray(mean_path, dtype=float)
     if not np.all(np.isfinite(mean_path)):
-        return Replication(r, failure="non_finite")
+        return Replication(r, failure="non_finite", warnings=seen)
     if not noise:
-        return Replication(r, mean_path=mean_path, path=mean_path)
+        return Replication(r, mean_path=mean_path, path=mean_path, warnings=seen)
     noise_r = _resample_blocks(pool, block_length, rng, size=len(mean_path))
-    return Replication(r, mean_path=mean_path, path=mean_path + noise_r)
+    return Replication(r, mean_path=mean_path, path=mean_path + noise_r, warnings=seen)
 
 
 def _failure_counts(outcomes):
@@ -203,13 +225,12 @@ class MovingBlockBootstrap(BaseBootstrap):
                                    date_col=date_col,
                                    covariate_cols=covariate_cols)
 
-        base_rng = np.random.default_rng(seed)
-        sim_seeds = base_rng.integers(0, 2**31, size=self.n_sim)
+        sim_seeds = replication_seeds(seed, self.n_sim)
         cols = ReplicateColumns(target_col, date_col, covariate_cols)
 
         def run(i):
             return replicate(i, model, train_df, target_df, fitted_values,
-                             pool, self.block_length, int(sim_seeds[i]), cols,
+                             pool, self.block_length, sim_seeds[i], cols,
                              startup_rows=startup)
 
         try:

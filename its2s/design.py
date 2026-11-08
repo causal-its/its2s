@@ -13,7 +13,6 @@
 # Usage: from its2s.design import Design, declare_design, render_text
 # Dependencies: pandas, matplotlib
 
-import json
 import math
 import os
 import textwrap
@@ -30,7 +29,7 @@ from .folds import cycles_seen, layout_folds, longest_cycle
 from .frequency import SeriesFrequency, resolve_frequency
 from .models.families import FAMILIES, arima_period, resolve_space
 from .origins import N_ORIGINS_RANGE, place_origins
-from .records import atomic_directory, record_json
+from .records import atomic_directory, record_json, stamped_on
 from .seasonality import CYCLES, _sampling_interval, make_seasonality
 from .seeds import derive_seed
 from .outputs.design_plot import MAX_PLOTTED_COMBINATIONS, design_figure
@@ -1271,12 +1270,8 @@ def _show(fig):
 def _sealed_on(label_dir):
     """The date an existing label was sealed: from its design record, else
     the directory's modification time."""
-    try:
-        with open(os.path.join(label_dir, RECORD_DIR, RECORD_FILE), encoding="utf-8") as fh:
-            return json.load(fh)["declared_at"][:10]
-    except (OSError, ValueError, KeyError, TypeError):
-        mtime = os.path.getmtime(label_dir)
-        return datetime.fromtimestamp(mtime, tz=timezone.utc).date().isoformat()
+    return stamped_on(os.path.join(label_dir, RECORD_DIR, RECORD_FILE), "declared_at",
+                      label_dir)
 
 
 def _suggest_label(label):

@@ -92,6 +92,18 @@ class BaseModel(ABC):
         """
         return 0
 
+    def in_sample(self, fit_df, target_col="y", date_col="ds",
+                  covariate_cols=None) -> np.ndarray:
+        """The model's in-sample fitted values on the rows it was fit on.
+
+        Works on a fitted model and on a loaded one, which holds no fit
+        result. Step 4 takes its fitted values from here and confirms them
+        against the digest the fit record sealed. A family step 4 supports
+        overrides it.
+        """
+        raise NotImplementedError(
+            f"{self.spec.name} does not provide in-sample fitted values.")
+
     @abstractmethod
     def seasonal_components(self) -> dict:
         """The seasonal structure this fit actually carries (P11.04.V-8)."""
