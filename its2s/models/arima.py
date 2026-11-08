@@ -111,6 +111,16 @@ class ARIMAModel(BaseModel):
             actual=actual,
         )
 
+    def startup_rows(self):
+        """d + D*m: a differenced model has no in-sample prediction for its
+        first d + D*m rows (pmdarima returns about 0 there), so their
+        residuals are about the observations themselves."""
+        if self._fixed_order is None:
+            raise ValueError("startup_rows needs a fitted or loaded model.")
+        d = self._fixed_order[1]
+        _, D, _, m = self._fixed_seasonal_order
+        return int(d + D * m)
+
     def clone_fresh(self):
         return ARIMAModel(
             params=copy.deepcopy(self.params),

@@ -95,19 +95,31 @@ class Replication:
         return self.failure is None
 
 
-def replicate(r, model, fit_df, target_df, fitted, residuals, block_length,
-              seed_r, cols):
+def residual_pool(residuals, startup_rows):
+    """The residuals a replication resamples: those after the start-up rows."""
+    return np.asarray(residuals, dtype=float)[startup_rows:]
+
+
+def replicate(r, model, fit_df, target_df, fitted, pool, block_length,
+              seed_r, cols, startup_rows=0):
     """Run bootstrap replication r and return its Replication outcome.
 
-    Builds the perturbed series fitted + block-resampled residuals, refits
-    a fresh copy of the model on it and forecasts target_df. Every random
-    draw comes from seed_r alone, so replication r's outcome does not
-    depend on which other replications run or in what order. Never raises
+    Builds the perturbed series: the first startup_rows rows keep their
+    observed values, every later row is fitted + block-resampled residuals
+    drawn from pool (residual_pool). Then refits a fresh copy of the model
+    on it and forecasts target_df. Every random draw comes from seed_r
+    alone, so replication r's outcome does not depend on which other
+    replications run or in what order. Never raises
     for a failed refit or forecast: the failure is returned, named.
     """
     rng = np.random.default_rng(seed_r)
     perturbed = fit_df.copy()
-    perturbed[cols.target] = fitted + _resample_blocks(residuals, block_length, rng)
+    k = startup_rows
+    observed = fit_df[cols.target].to_numpy(dtype=float)
+    perturbed[cols.target] = np.concatenate([
+        observed[:k],
+        np.asarray(fitted, dtype=float)[k:] + _resample_blocks(pool, block_length, rng),
+    ])
     try:
         fresh_model = model.clone_fresh()
         with warnings.catch_warnings():
@@ -158,10 +170,11 @@ class MovingBlockBootstrap(BaseBootstrap):
             raise ValueError("Model must be fitted before generating bootstrap CIs.")
 
         fitted_values = model._fit_result.fitted_values
-        residuals = model._fit_result.residuals
+        startup = model.startup_rows()
+        pool = residual_pool(model._fit_result.residuals, startup)
         # Checked once here, so a bad length is one clear error rather than a
         # failure inside every replication.
-        check_block_length(len(residuals), self.block_length)
+        check_block_length(len(pool), self.block_length)
 
         # Point prediction from original model
         point_pred = model.predict(target_df, target_col=target_col,
@@ -174,7 +187,8 @@ class MovingBlockBootstrap(BaseBootstrap):
 
         def run(i):
             return replicate(i, model, train_df, target_df, fitted_values,
-                             residuals, self.block_length, int(sim_seeds[i]), cols)
+                             pool, self.block_length, int(sim_seeds[i]), cols,
+                             startup_rows=startup)
 
         try:
             outcomes = Parallel(n_jobs=self.n_jobs, prefer="threads")(

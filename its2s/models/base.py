@@ -84,6 +84,14 @@ class BaseModel(ABC):
     def clone_fresh(self) -> "BaseModel":
         """Return an unfitted copy of this model with the same params."""
 
+    def startup_rows(self) -> int:
+        """Leading fit rows whose in-sample fit is a start-up artefact.
+
+        The bootstrap keeps these rows at their observed values and leaves
+        their residuals out of the pool. 0 unless a family overrides it.
+        """
+        return 0
+
     @abstractmethod
     def seasonal_components(self) -> dict:
         """The seasonal structure this fit actually carries (P11.04.V-8)."""
