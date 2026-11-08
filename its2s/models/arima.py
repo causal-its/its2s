@@ -22,20 +22,22 @@ class ARIMAModel(BaseModel):
 
     On first fit, auto_arima selects the best (p,d,q) and seasonal order
     within the declared seasonal period m (arima_period). clone_fresh()
-    preserves the discovered order so MBB refits use the same model
-    structure without repeating the expensive stepwise search.
+    preserves the discovered order and intercept setting so MBB refits use
+    the same model structure without repeating the expensive stepwise
+    search.
     """
 
     spec = get_family("arima")
     _libraries = ("pmdarima",)
 
     def __init__(self, params, seasonality, _fixed_order=None,
-                 _fixed_seasonal_order=None):
+                 _fixed_seasonal_order=None, _fixed_with_intercept=None):
         super().__init__(params, seasonality)
         self._m = arima_period(seasonality)
         self._model = None
         self._fixed_order = _fixed_order
         self._fixed_seasonal_order = _fixed_seasonal_order
+        self._fixed_with_intercept = _fixed_with_intercept
 
     def fit(self, train_df, target_col="y", date_col="ds", covariate_cols=None):
         p = self.params
@@ -44,11 +46,16 @@ class ARIMAModel(BaseModel):
         self._covariate_cols = covariate_cols
 
         if self._fixed_order is not None:
-            # Refit with known order (fast path for MBB)
+            # Refit with known order (fast path for MBB). The intercept
+            # setting is carried too: pm.ARIMA defaults to an intercept,
+            # which auto_arima may have chosen against.
+            intercept = {} if self._fixed_with_intercept is None else {
+                "with_intercept": self._fixed_with_intercept}
             self._model = pm.ARIMA(
                 order=self._fixed_order,
                 seasonal_order=self._fixed_seasonal_order,
                 suppress_warnings=p["suppress_warnings"],
+                **intercept,
             )
             self._model.fit(y, exogenous=exog)
         else:
@@ -76,6 +83,7 @@ class ARIMAModel(BaseModel):
             )
             self._fixed_order = self._model.order
             self._fixed_seasonal_order = self._model.seasonal_order
+            self._fixed_with_intercept = bool(self._model.with_intercept)
 
         fitted = self._model.predict_in_sample(exogenous=exog)
         residuals = y - fitted
@@ -109,6 +117,7 @@ class ARIMAModel(BaseModel):
             seasonality=self.seasonality,
             _fixed_order=self._fixed_order,
             _fixed_seasonal_order=self._fixed_seasonal_order,
+            _fixed_with_intercept=self._fixed_with_intercept,
         )
 
     def seasonal_components(self):
@@ -126,4 +135,5 @@ class ARIMAModel(BaseModel):
         self._model = joblib.load(directory / "arima.joblib")
         self._fixed_order = self._model.order
         self._fixed_seasonal_order = self._model.seasonal_order
+        self._fixed_with_intercept = bool(self._model.with_intercept)
         self._fit_result = None
