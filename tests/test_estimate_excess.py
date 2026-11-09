@@ -379,6 +379,31 @@ def _failing_at(monkeypatch, failing, captured):
     monkeypatch.setattr(estimate_module, "replicate", wrapped)
 
 
+def assert_failures_counted_and_survivors_used(est, captured, fit, point, n=N):
+    """est failed as TestFailures.FAILING says, and every interval and total
+    is the one the surviving replications alone give around point."""
+    b = est.bootstrap
+    assert b["n_succeeded"] == n - 4
+    assert b["failures"]["exception"] == {"ZeroDivisionError": 2}
+    assert b["failures"]["wrong_length"] == 1 and b["failures"]["non_finite"] == 1
+
+    survivors = np.column_stack([o.path for o in captured if o.ok])
+    assert survivors.shape[1] == n - 4
+    h = fit.to_dict()["handoff"]
+    target = estimate_module.target_rows(h, _frame())
+    dates = target["week"].reset_index(drop=True)
+    names = [p["name"] for p in est.periods]
+    masks = estimate_module._period_masks(h, dates, names)
+    steps, periods = excess_from_paths(
+        target["deaths"].to_numpy(dtype=float), point, survivors, est.interval["level"],
+        masks, percent="within_path")
+    for row, s in zip(est.per_step, steps):
+        assert (row["excess_lo"], row["excess_hi"]) == (s["excess_lo"], s["excess_hi"])
+    for row, p in zip(est.periods, periods):
+        assert (row["excess"], row["excess_lo"], row["excess_hi"]) == (
+            p["total_excess"], p["excess_lo"], p["excess_hi"])
+
+
 class TestFailures:
 
     FAILING = {2: "exception", 5: "wrong_length", 11: "non_finite", 17: "exception"}
@@ -389,24 +414,8 @@ class TestFailures:
         _failing_at(monkeypatch, self.FAILING, captured)
         with pytest.warns(EstimateWarning, match="4 of 30 bootstrap replications failed"):
             est = estimate_excess(fitted, data=_frame(), n_replications=N)
-        b = est.bootstrap
-        assert b["n_succeeded"] == N - 4
-        assert b["failures"]["exception"] == {"ZeroDivisionError": 2}
-        assert b["failures"]["wrong_length"] == 1 and b["failures"]["non_finite"] == 1
-
-        survivors = np.column_stack([o.path for o in captured if o.ok])
-        h = fitted.to_dict()["handoff"]
-        target = estimate_module.target_rows(h, _frame())
-        dates = target["week"].reset_index(drop=True)
-        masks = estimate_module._period_masks(h, dates, ["full_window", "early", "late"])
-        steps, periods = excess_from_paths(
-            target["deaths"].to_numpy(dtype=float), np.full(H, fitted.model().level),
-            survivors, 0.95, masks, percent="within_path")
-        for row, s in zip(est.per_step, steps):
-            assert (row["excess_lo"], row["excess_hi"]) == (s["excess_lo"], s["excess_hi"])
-        for row, p in zip(est.periods, periods):
-            assert (row["excess"], row["excess_lo"], row["excess_hi"]) == (
-                p["total_excess"], p["excess_lo"], p["excess_hi"])
+        assert_failures_counted_and_survivors_used(est, captured, fitted,
+                                                   np.full(H, fitted.model().level))
 
     def test_the_failure_warning_is_given_once(self, fitted, monkeypatch):
         _failing_at(monkeypatch, self.FAILING, [])

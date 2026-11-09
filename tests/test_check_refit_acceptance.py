@@ -117,11 +117,11 @@ def _reachable(root, defs):
     return seen
 
 
-def _violations(names, defs, root):
+def _violations(names, defs, root, record_names=_RECORD_NAMES):
     found = []
     for name in sorted(names):
         for node in ast.walk(defs[name]):
-            if isinstance(node, ast.Name) and node.id in _RECORD_NAMES and \
+            if isinstance(node, ast.Name) and node.id in record_names and \
                     not (name == root and node.id == root):
                 found.append(f"{name}: name {node.id}")
             if isinstance(node, ast.Attribute) and node.attr in _RECORD_METHODS:
@@ -245,11 +245,11 @@ _CLOCK = {"declared_at", "screening_started_at", "first_fit_at", "checked_at",
           "fitted_at", "sealed_at", "seal"}
 
 
-def _without_clock(value):
+def _without_clock(value, clock=_CLOCK):
     if isinstance(value, dict):
-        return {k: _without_clock(v) for k, v in value.items() if k not in _CLOCK}
+        return {k: _without_clock(v, clock) for k, v in value.items() if k not in clock}
     if isinstance(value, list):
-        return [_without_clock(v) for v in value]
+        return [_without_clock(v, clock) for v in value]
     return value
 
 
