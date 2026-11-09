@@ -9,7 +9,7 @@ import numpy as np
 import pmdarima as pm
 
 from .base import BaseModel, FitResult, PredictionResult
-from .families import arima_period, get_family
+from .families import arima_period, get_family, startup_rows_of
 
 # auto_arima's own starting orders. It raises when a bound is below its start
 # (and when max_d is 0), which tuning would score as inf and silently lose
@@ -22,20 +22,22 @@ class ARIMAModel(BaseModel):
 
     On first fit, auto_arima selects the best (p,d,q) and seasonal order
     within the declared seasonal period m (arima_period). clone_fresh()
-    preserves the discovered order so MBB refits use the same model
-    structure without repeating the expensive stepwise search.
+    preserves the discovered order and intercept setting so MBB refits use
+    the same model structure without repeating the expensive stepwise
+    search.
     """
 
     spec = get_family("arima")
     _libraries = ("pmdarima",)
 
     def __init__(self, params, seasonality, _fixed_order=None,
-                 _fixed_seasonal_order=None):
+                 _fixed_seasonal_order=None, _fixed_with_intercept=None):
         super().__init__(params, seasonality)
         self._m = arima_period(seasonality)
         self._model = None
         self._fixed_order = _fixed_order
         self._fixed_seasonal_order = _fixed_seasonal_order
+        self._fixed_with_intercept = _fixed_with_intercept
 
     def fit(self, train_df, target_col="y", date_col="ds", covariate_cols=None):
         p = self.params
@@ -44,18 +46,23 @@ class ARIMAModel(BaseModel):
         self._covariate_cols = covariate_cols
 
         if self._fixed_order is not None:
-            # Refit with known order (fast path for MBB)
+            # Refit with known order (fast path for MBB). The intercept
+            # setting is carried too: pm.ARIMA defaults to an intercept,
+            # which auto_arima may have chosen against.
+            intercept = {} if self._fixed_with_intercept is None else {
+                "with_intercept": self._fixed_with_intercept}
             self._model = pm.ARIMA(
                 order=self._fixed_order,
                 seasonal_order=self._fixed_seasonal_order,
                 suppress_warnings=p["suppress_warnings"],
+                **intercept,
             )
-            self._model.fit(y, exogenous=exog)
+            self._model.fit(y, X=exog)
         else:
             # Initial fit with order selection
             self._model = pm.auto_arima(
                 y,
-                exogenous=exog,
+                X=exog,
                 start_p=min(_START["p"], p["max_p"]),
                 max_p=p["max_p"],
                 d=0 if p["max_d"] == 0 else None,
@@ -76,8 +83,9 @@ class ARIMAModel(BaseModel):
             )
             self._fixed_order = self._model.order
             self._fixed_seasonal_order = self._model.seasonal_order
+            self._fixed_with_intercept = bool(self._model.with_intercept)
 
-        fitted = self._model.predict_in_sample(exogenous=exog)
+        fitted = self._model.predict_in_sample(X=exog)
         residuals = y - fitted
 
         self._fit_result = FitResult(
@@ -93,7 +101,7 @@ class ARIMAModel(BaseModel):
         n_periods = len(target_df)
         exog = target_df[covariate_cols].values if covariate_cols else None
 
-        preds = self._model.predict(n_periods=n_periods, exogenous=exog)
+        preds = self._model.predict(n_periods=n_periods, X=exog)
 
         actual = target_df[target_col].values if target_col in target_df.columns else None
 
@@ -103,12 +111,45 @@ class ARIMAModel(BaseModel):
             actual=actual,
         )
 
+    def startup_rows(self):
+        """d + D*m: a differenced model has no in-sample prediction for its
+        first d + D*m rows (pmdarima returns about 0 there), so their
+        residuals are about the observations themselves."""
+        if self._fixed_order is None:
+            raise ValueError("startup_rows needs a fitted or loaded model.")
+        return startup_rows_of(self._fixed_order, self._fixed_seasonal_order)
+
+    def in_sample(self, fit_df, target_col="y", date_col="ds", covariate_cols=None):
+        """The held model's in-sample fitted values on fit_df.
+
+        pmdarima's predict_in_sample takes no rows: it returns the fit over
+        the observations the model was fit on. So fit_df's length is checked
+        against the model's own count of observations, and a mismatch
+        raises rather than returning values for other rows.
+        """
+        if self._model is None:
+            raise ValueError("in_sample needs a fitted or loaded model.")
+        covariate_cols = covariate_cols or self._covariate_cols
+        nobs = int(self._model.nobs_)
+        if len(fit_df) != nobs:
+            raise ValueError(
+                f"The ARIMA model was fit on {nobs} observations; in_sample was "
+                f"given {len(fit_df)} rows.")
+        exog = fit_df[covariate_cols].values if covariate_cols else None
+        fitted = np.asarray(self._model.predict_in_sample(X=exog), dtype=float)
+        if len(fitted) != nobs:
+            raise ValueError(
+                f"The ARIMA model returned {len(fitted)} in-sample values for "
+                f"{nobs} observations.")
+        return fitted
+
     def clone_fresh(self):
         return ARIMAModel(
             params=copy.deepcopy(self.params),
             seasonality=self.seasonality,
             _fixed_order=self._fixed_order,
             _fixed_seasonal_order=self._fixed_seasonal_order,
+            _fixed_with_intercept=self._fixed_with_intercept,
         )
 
     def seasonal_components(self):
@@ -126,4 +167,5 @@ class ARIMAModel(BaseModel):
         self._model = joblib.load(directory / "arima.joblib")
         self._fixed_order = self._model.order
         self._fixed_seasonal_order = self._model.seasonal_order
+        self._fixed_with_intercept = bool(self._model.with_intercept)
         self._fit_result = None

@@ -150,11 +150,12 @@ def mase_period(seasonality):
     return 1 if cycle is None else int(round(seasonality.periods[cycle]))
 
 
-def verify_data(handoff, data, error):
+def verify_data(handoff, data, error, nothing="Nothing has been fit."):
     """The data must be the data the design was sealed against.
 
     Raises error (the calling step's exception class) when a column is
-    missing or the fingerprint differs; returns the fingerprint.
+    missing or the fingerprint differs, ending with nothing, the sentence
+    that says what the calling step has not done; returns the fingerprint.
     """
     d = handoff["data"]
     cols = [d["outcome_col"], *d["covariate_cols"]]
@@ -169,5 +170,5 @@ def verify_data(handoff, data, error):
             f"The data does not match the design's fingerprint. Sealed: {d['fingerprint']} "
             f"over {sealed['n']} rows, {sealed['first']} to {sealed['last']}. Given: "
             f"{fp['digest']} over {rows['n']} rows, {rows['first']} to {rows['last']}. "
-            "Nothing has been fit.")
+            + nothing)
     return fp

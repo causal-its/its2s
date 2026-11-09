@@ -379,9 +379,12 @@ def test_arima_seasonal_bounds_reach_auto_arima(monkeypatch):
     captured = {}
 
     class _Stub:
+        # Stands in for a fitted pmdarima model, which always carries
+        # with_intercept beside its order.
         order, seasonal_order = (1, 0, 0), (0, 0, 0, 7)
+        with_intercept = False
 
-        def predict_in_sample(self, exogenous=None):
+        def predict_in_sample(self, X=None):
             return np.zeros(50)
 
     monkeypatch.setattr(arima_mod.pm, "auto_arima",

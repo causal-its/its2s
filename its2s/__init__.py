@@ -13,6 +13,8 @@ from .check import CheckError, CheckWarning, check_selected_model
 from .check_record import CheckRecord
 from .final_fit import FitError, fit_final_model
 from .fit_record import FitRecord
+from .estimate import EstimateError, EstimateWarning, estimate_excess
+from .estimate_record import EstimateRecord
 from .design_record import DesignRecord
 from .explore import explore
 from .metrics.excess import calc_ate_summary
@@ -49,4 +51,8 @@ __all__ = [
     "fit_final_model",
     "FitRecord",
     "FitError",
+    "estimate_excess",
+    "EstimateRecord",
+    "EstimateError",
+    "EstimateWarning",
 ]

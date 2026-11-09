@@ -419,11 +419,21 @@ class TestBootstrap:
         resampled = _resample_blocks(residuals, block_length=5, rng=rng)
         assert len(resampled) == len(residuals)
 
-    def test_resample_blocks_short_residuals(self):
+    def test_resample_blocks_block_not_shorter_than_pool_raises(self):
+        # No silent fallback to resampling single residuals: a block as long
+        # as the pool, or longer, is an error.
         from its2s.bootstrap.mbb import _resample_blocks
         rng = np.random.default_rng(42)
         residuals = np.array([1.0, 2.0, 3.0])
-        resampled = _resample_blocks(residuals, block_length=10, rng=rng)
+        for block_length in (3, 10):
+            with pytest.raises(ValueError, match="shorter than the residual pool"):
+                _resample_blocks(residuals, block_length=block_length, rng=rng)
+
+    def test_resample_blocks_longest_allowed_block(self):
+        from its2s.bootstrap.mbb import _resample_blocks
+        rng = np.random.default_rng(42)
+        residuals = np.array([1.0, 2.0, 3.0])
+        resampled = _resample_blocks(residuals, block_length=2, rng=rng)
         assert len(resampled) == len(residuals)
 
     def test_resample_blocks_reproducibility(self):
@@ -485,6 +495,121 @@ class TestBootstrap:
         z = norm.ppf(0.975)
         np.testing.assert_allclose(lo, -z * sd, rtol=1e-6)
         np.testing.assert_allclose(hi, z * sd, rtol=1e-6)
+
+
+class _NoiseStubModel:
+    """Stand-in family for the replication tests. Its forecast is a fixed
+    function of the series it was fitted on (row index plus the mean of
+    y), so the mean path is deterministic given the perturbation, and it
+    records every series it is fitted on."""
+
+    def __init__(self, fits=None):
+        self.fits = [] if fits is None else fits
+        self._level = None
+
+    def clone_fresh(self):
+        return _NoiseStubModel(self.fits)
+
+    def fit(self, df, target_col="y", date_col="ds", covariate_cols=None):
+        y = df[target_col].to_numpy(dtype=float)
+        self.fits.append(y.copy())
+        self._level = y.mean()
+
+    def predict(self, df, target_col="y", date_col="ds", covariate_cols=None):
+        from types import SimpleNamespace
+        return SimpleNamespace(predicted=np.arange(len(df)) + self._level)
+
+
+class TestReplicateNoise:
+    """Structure of the interim prediction interval's noise draw in
+    replicate(): drawn last, from the same stream, in whole pool blocks."""
+
+    SEED = 20261108
+    N_FIT = 40
+    H = 13
+    BLOCK = 5
+
+    def _inputs(self):
+        from its2s.bootstrap.mbb import ReplicateColumns, residual_pool
+        rng = np.random.default_rng(self.SEED)
+        fit_df = pd.DataFrame({
+            "ds": pd.date_range("2020-01-06", periods=self.N_FIT, freq="W-MON"),
+            "y": rng.normal(10.0, 1.0, self.N_FIT),
+        })
+        target_df = pd.DataFrame({
+            "ds": pd.date_range(fit_df["ds"].iloc[-1], periods=self.H + 1,
+                                freq="W-MON")[1:],
+            "y": np.zeros(self.H),
+        })
+        fitted = np.full(self.N_FIT, 10.0)
+        # Distinct residuals, so every block of the pool is identifiable.
+        pool = residual_pool(np.arange(self.N_FIT) ** 1.5, 0)
+        return fit_df, target_df, fitted, pool, ReplicateColumns()
+
+    def _run(self, noise, seed_r=7):
+        from its2s.bootstrap.mbb import replicate
+        fit_df, target_df, fitted, pool, cols = self._inputs()
+        model = _NoiseStubModel()
+        out = replicate(0, model, fit_df, target_df, fitted, pool, self.BLOCK,
+                        seed_r, cols, noise=noise)
+        assert out.ok, out.detail
+        return out, model.fits, pool
+
+    def test_resample_blocks_size_sets_length(self):
+        from its2s.bootstrap.mbb import _resample_blocks
+        pool = np.arange(20.0)
+        for size in (3, 5, 13, 47):
+            got = _resample_blocks(pool, 5, np.random.default_rng(1), size=size)
+            assert len(got) == size
+
+    def test_resample_blocks_size_none_unchanged(self):
+        # The default draws exactly what it drew before size existed, so the
+        # perturbation of every existing run is untouched.
+        from its2s.bootstrap.mbb import _resample_blocks
+        pool = np.random.default_rng(3).standard_normal(50)
+        a = _resample_blocks(pool, 5, np.random.default_rng(42))
+        b = _resample_blocks(pool, 5, np.random.default_rng(42), size=50)
+        np.testing.assert_array_equal(a, b)
+
+    def test_no_noise_path_is_mean_path(self):
+        out, _, _ = self._run(noise=False)
+        np.testing.assert_array_equal(out.path, out.mean_path)
+
+    def test_same_seed_shares_perturbation_and_mean_path(self):
+        conf, conf_fits, _ = self._run(noise=False)
+        pred, pred_fits, _ = self._run(noise=True)
+        np.testing.assert_array_equal(conf_fits[0], pred_fits[0])
+        np.testing.assert_array_equal(conf.mean_path, pred.mean_path)
+        assert not np.array_equal(pred.path, pred.mean_path)
+
+    def test_noise_is_drawn_after_perturbation_from_same_stream(self):
+        # Replaying seed_r: the perturbation's draw first, then H more from
+        # the same generator, gives exactly path - mean_path.
+        from its2s.bootstrap.mbb import _resample_blocks
+        seed_r = 7
+        pred, _, pool = self._run(noise=True, seed_r=seed_r)
+        rng = np.random.default_rng(seed_r)
+        _resample_blocks(pool, self.BLOCK, rng)
+        expected = _resample_blocks(pool, self.BLOCK, rng, size=self.H)
+        np.testing.assert_array_equal(pred.path - pred.mean_path, expected)
+
+    def test_noise_is_whole_pool_blocks(self):
+        pred, _, pool = self._run(noise=True)
+        draw = pred.path - pred.mean_path
+        windows = [pool[s:s + self.BLOCK]
+                   for s in range(len(pool) - self.BLOCK + 1)]
+        for j in range(0, self.H, self.BLOCK):
+            seg = draw[j:j + self.BLOCK]
+            assert any(np.allclose(seg, w[:len(seg)], rtol=0, atol=1e-9)
+                       for w in windows), f"segment at {j} is not a pool block"
+
+    def test_noise_comes_from_centred_pool(self):
+        # The pool the noise is drawn from has mean zero (centred); the
+        # noise values are all members of it.
+        pred, _, pool = self._run(noise=True)
+        assert abs(pool.mean()) < 1e-9
+        draw = pred.path - pred.mean_path
+        assert all(np.any(np.isclose(v, pool, rtol=0, atol=1e-9)) for v in draw)
 
 
 # ===================================================================

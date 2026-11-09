@@ -337,3 +337,42 @@ def short_series():
 @pytest.fixture(scope="session")
 def covariate_series():
     return make_series_with_covariates(intervention_effect=5.0)
+
+
+# ---------------------------------------------------------------------------
+# Every step 4 estimate the suite writes is labelled not validated
+# ---------------------------------------------------------------------------
+
+# The interval's coverage has not been measured, and it is known to
+# undercover; until the interval method is rebuilt, no estimate may say
+# otherwise, in its record or in its report.
+NOT_VALIDATED = "has not been validated, and it is known to undercover"
+
+
+def assert_labelled_not_validated(record_file):
+    """The estimate record at record_file says its interval is not
+    validated, and the report beside it carries the coverage caveat."""
+    import json
+    import os
+    from its2s.estimate_record import REPORT_FILE
+    with open(record_file, encoding="utf-8") as fh:
+        record = json.load(fh)
+    assert record["interval"]["validated"] is False, record_file
+    assert any(NOT_VALIDATED in c for c in record["caveats"]), record_file
+    with open(os.path.join(os.path.dirname(record_file), REPORT_FILE),
+              encoding="utf-8") as fh:
+        report = " ".join(fh.read().split())
+    assert NOT_VALIDATED in report, record_file
+
+
+@pytest.fixture(scope="session", autouse=True)
+def every_estimate_is_labelled_not_validated(tmp_path_factory):
+    """After the whole session, every estimate record written anywhere under
+    the session's temporary directories (in this process or a child) is
+    checked. A failure here is reported as an error at the teardown of the
+    last test run."""
+    yield
+    from its2s.estimate_record import RECORD_DIR, RECORD_FILE
+    base = tmp_path_factory.getbasetemp()
+    for record_file in sorted(base.rglob(f"{RECORD_DIR}/*/{RECORD_FILE}")):
+        assert_labelled_not_validated(str(record_file))
